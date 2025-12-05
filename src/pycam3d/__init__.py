@@ -90,6 +90,31 @@ from pycam3d.decision import (
     quick_settings,
 )
 
+# Tool library
+from pycam3d.tools import (
+    ToolSpec,
+    ToolShape,
+    ToolMaterial,
+    ToolCoating,
+    ToolGeometry,
+    ToolLibrary,
+    get_tool_library,
+    get_tool,
+    list_tools,
+    recommend_tools,
+)
+
+# Simulation
+from pycam3d.simulation import (
+    SimulationEngine,
+    SimulationState,
+    SimulationFrame,
+    SimulationMove,
+    MaterialRemovalSimulator,
+    create_simulation_from_toolpath,
+    create_simulation_from_gcode,
+)
+
 __all__ = [
     # Core
     "MeshProcessor",
@@ -145,4 +170,23 @@ __all__ = [
     "MachiningPlan",
     "auto_plan",
     "quick_settings",
+    # Tool library
+    "ToolSpec",
+    "ToolShape",
+    "ToolMaterial",
+    "ToolCoating",
+    "ToolGeometry",
+    "ToolLibrary",
+    "get_tool_library",
+    "get_tool",
+    "list_tools",
+    "recommend_tools",
+    # Simulation
+    "SimulationEngine",
+    "SimulationState",
+    "SimulationFrame",
+    "SimulationMove",
+    "MaterialRemovalSimulator",
+    "create_simulation_from_toolpath",
+    "create_simulation_from_gcode",
 ]

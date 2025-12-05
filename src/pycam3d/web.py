@@ -564,10 +564,103 @@ HTML_TEMPLATE = """
         });
 
         // Animate toolpath
-        document.getElementById('animate-btn').addEventListener('click', () => {
-            // TODO: Add animation
-            showStatus('Animation coming soon!');
+        let simulationData = null;
+        let animationFrameIndex = 0;
+        let isAnimating = false;
+        let animationSpeed = 1.0;
+
+        document.getElementById('animate-btn').addEventListener('click', async () => {
+            if (!currentMeshId) return;
+
+            if (isAnimating) {
+                stopAnimation();
+                return;
+            }
+
+            showStatus('<span class="loading"></span>Loading simulation...');
+
+            try {
+                const response = await fetch(`/api/simulation/${currentMeshId}`);
+                const data = await response.json();
+
+                if (data.error) {
+                    showStatus('Error: ' + data.error);
+                    return;
+                }
+
+                simulationData = data;
+                startAnimation();
+                showStatus('Animation started! Click button again to stop.');
+                document.getElementById('animate-btn').textContent = 'Stop Animation';
+
+            } catch (err) {
+                showStatus('Simulation failed: ' + err.message);
+            }
         });
+
+        function startAnimation() {
+            if (!simulationData || !simulationData.frames) return;
+
+            isAnimating = true;
+            animationFrameIndex = 0;
+
+            // Create tool marker if not exists
+            if (!toolMarker) {
+                const markerGeom = new THREE.SphereGeometry(3, 16, 16);
+                const markerMat = new THREE.MeshPhongMaterial({ color: 0xff4444, emissive: 0x441111 });
+                toolMarker = new THREE.Mesh(markerGeom, markerMat);
+                scene.add(toolMarker);
+            }
+            toolMarker.visible = true;
+
+            animateFrame();
+        }
+
+        function animateFrame() {
+            if (!isAnimating || !simulationData) return;
+
+            const frames = simulationData.frames;
+            if (animationFrameIndex >= frames.length) {
+                animationFrameIndex = 0;  // Loop
+            }
+
+            const frame = frames[animationFrameIndex];
+
+            // Update tool marker position (swap Y and Z for Three.js)
+            toolMarker.position.set(frame.position[0], frame.position[2], frame.position[1]);
+
+            // Change color based on cutting state
+            if (frame.is_cutting) {
+                toolMarker.material.color.setHex(0xff4444);
+                toolMarker.material.emissive.setHex(0x441111);
+            } else {
+                toolMarker.material.color.setHex(0x44ff44);
+                toolMarker.material.emissive.setHex(0x114411);
+            }
+
+            animationFrameIndex += Math.ceil(animationSpeed);
+
+            // Update progress in status
+            const progress = (frame.total_progress * 100).toFixed(1);
+            const timeStr = frame.time.toFixed(1);
+            document.getElementById('status').innerHTML = `Simulating: ${progress}% (${timeStr}s)`;
+            document.getElementById('status').classList.add('show');
+
+            animationId = requestAnimationFrame(animateFrame);
+        }
+
+        function stopAnimation() {
+            isAnimating = false;
+            if (animationId) {
+                cancelAnimationFrame(animationId);
+                animationId = null;
+            }
+            if (toolMarker) {
+                toolMarker.visible = false;
+            }
+            document.getElementById('animate-btn').textContent = 'Animate Toolpath';
+            document.getElementById('status').classList.remove('show');
+        }
 
         init();
     </script>
@@ -694,6 +787,9 @@ def create_app():
 
             toolpath.feed_rate = request.feed_rate
 
+            # Store toolpath for simulation
+            mesh_data["toolpath"] = toolpath
+
             # Generate G-code
             writer = GCodeWriter()
             gcode = writer.generate(toolpath, spindle_rpm=request.spindle_rpm)
@@ -718,6 +814,37 @@ def create_app():
 
         except Exception as e:
             logger.exception("Generation failed")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    @app.get("/api/simulation/{mesh_id}")
+    async def get_simulation(mesh_id: str, fps: float = 30.0):
+        """Get simulation animation data for a generated toolpath."""
+        try:
+            if mesh_id not in mesh_store:
+                return JSONResponse({"error": "Mesh not found"}, status_code=404)
+
+            mesh_data = mesh_store[mesh_id]
+
+            # Check if we have a toolpath stored
+            if "toolpath" not in mesh_data:
+                return JSONResponse({"error": "No toolpath generated yet"}, status_code=400)
+
+            from pycam3d.simulation import SimulationEngine
+
+            toolpath = mesh_data["toolpath"]
+            mesh = mesh_data["mesh"]
+
+            # Create simulation
+            engine = SimulationEngine()
+            engine.load_from_toolpath(toolpath, safe_z=mesh.bounds[1][2] + 10)
+
+            # Export animation data
+            animation_data = engine.export_animation_data(fps=fps)
+
+            return JSONResponse(animation_data)
+
+        except Exception as e:
+            logger.exception("Simulation failed")
             return JSONResponse({"error": str(e)}, status_code=500)
 
     @app.get("/api/health")

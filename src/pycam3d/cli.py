@@ -1064,6 +1064,100 @@ def materials(ctx: click.Context) -> None:
 
 
 @main.command()
+@click.option("--type", "-t", "tool_type", type=click.Choice(["all", "flat", "ball", "bull", "drill", "chamfer", "roughing"]), default="all", help="Filter by tool type")
+@click.option("--diameter", "-d", type=float, default=None, help="Filter by diameter (mm)")
+@click.option("--recommend", "-r", type=str, default=None, help="Get recommendations for operation (roughing, finishing, drilling, etc.)")
+@click.pass_context
+def tools(ctx: click.Context, tool_type: str, diameter: float | None, recommend: str | None) -> None:
+    """
+    List available tools in the library.
+
+    Use --recommend to get tool suggestions for specific operations.
+    """
+    from pycam3d.tools import ToolLibrary, ToolShape, recommend_tools
+
+    lib = ToolLibrary()
+
+    if recommend:
+        # Get recommendations for operation
+        console.print(Panel.fit(f"[bold blue]Tool Recommendations[/bold blue]\nOperation: [cyan]{recommend}[/cyan]"))
+        recommendations = recommend_tools(recommend, max_diameter=diameter or float('inf'))
+
+        if not recommendations:
+            console.print(f"[yellow]No tools found for operation: {recommend}[/yellow]")
+            return
+
+        table = Table(title=f"Recommended Tools for '{recommend}'")
+        table.add_column("#", style="dim")
+        table.add_column("Tool", style="cyan")
+        table.add_column("Shape", style="green")
+        table.add_column("Material", style="yellow")
+        table.add_column("Coating", style="blue")
+        table.add_column("Diameter", style="magenta")
+
+        for i, tool in enumerate(recommendations[:15], 1):
+            table.add_row(
+                str(i),
+                tool.name,
+                tool.shape.value,
+                tool.material.value,
+                tool.coating.value,
+                f"{tool.diameter:.1f}mm"
+            )
+
+        console.print(table)
+        console.print(f"\n[dim]Showing top {min(15, len(recommendations))} of {len(recommendations)} matches[/dim]")
+        return
+
+    # List tools
+    shape_filter = None
+    if tool_type != "all":
+        shape_map = {
+            "flat": ToolShape.FLAT_ENDMILL,
+            "ball": ToolShape.BALL_ENDMILL,
+            "bull": ToolShape.BULL_ENDMILL,
+            "drill": ToolShape.DRILL,
+            "chamfer": ToolShape.CHAMFER,
+            "roughing": ToolShape.ROUGHING,
+        }
+        shape_filter = shape_map.get(tool_type)
+
+    tools_list = lib.find_tools(shape=shape_filter)
+
+    if diameter is not None:
+        tools_list = [t for t in tools_list if abs(t.diameter - diameter) < 0.5]
+
+    if not tools_list:
+        console.print("[yellow]No tools found matching criteria[/yellow]")
+        return
+
+    table = Table(title="Tool Library")
+    table.add_column("ID", style="dim", max_width=25)
+    table.add_column("Name", style="cyan")
+    table.add_column("Shape", style="green")
+    table.add_column("Diameter", style="yellow")
+    table.add_column("Flutes", style="blue")
+    table.add_column("Material", style="magenta")
+
+    for tool in tools_list[:30]:
+        table.add_row(
+            tool.tool_id[:25],
+            tool.name,
+            tool.shape.value,
+            f"{tool.diameter:.1f}mm",
+            str(tool.flutes),
+            tool.material.value,
+        )
+
+    console.print(table)
+
+    # Show categories summary
+    categories = lib.get_categories()
+    console.print(f"\n[dim]Total: {len(lib.tools)} tools | Showing {min(30, len(tools_list))} matching[/dim]")
+    console.print(f"[dim]Categories: {', '.join(f'{k}({v})' for k, v in sorted(categories.items()))}[/dim]")
+
+
+@main.command()
 @click.argument("input_file", type=click.Path(exists=True))
 @click.option("--machine", "-m", default="shapeoko-4", help="Machine name from database")
 @click.option("--material", "-M", default="plywood", help="Material name from database")
