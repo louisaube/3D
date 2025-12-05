@@ -1302,6 +1302,268 @@ def auto(
     console.print(f"\n[bold green]G-code saved to: {output}[/bold green]")
 
 
+# =============================================================================
+# 4-AXIS MACHINING COMMANDS
+# =============================================================================
+
+@main.command(name="4axis")
+@click.argument("input_file", type=click.Path(exists=True))
+@click.option("-o", "--output", type=click.Path(), help="Output G-code file")
+@click.option("--tool-diameter", "-d", type=float, default=6.0, help="Tool diameter in mm")
+@click.option("--tool-type", "-t", type=click.Choice(["ball", "flat", "bull"]), default="ball")
+@click.option("--strategy", "-s", type=click.Choice(["PARALLELR", "PARALLEL", "HELIX", "CROSS"]), default="PARALLELR",
+              help="4-axis strategy: PARALLELR (around axis), PARALLEL (along axis), HELIX, CROSS (both)")
+@click.option("--rotary-axis", "-a", type=click.Choice(["X", "Y", "Z"]), default="X",
+              help="Axis of rotation")
+@click.option("--machine", "-m", type=click.Choice(["GENERIC_4AXIS", "LUQUE_L1530", "ROTARY_TABLE_A", "ROTARY_TABLE_C"]),
+              default="LUQUE_L1530", help="Machine type")
+@click.option("--stepover", type=float, default=2.0, help="Stepover between passes (mm)")
+@click.option("--stepdown", type=float, default=5.0, help="Depth per layer (mm)")
+@click.option("--feed-rate", "-f", type=float, default=1000.0, help="Feed rate in mm/min")
+@click.option("--plunge-rate", type=float, default=300.0, help="Plunge rate in mm/min")
+@click.option("--spindle-rpm", "-r", type=int, default=12000, help="Spindle RPM")
+@click.option("--safe-z", type=float, default=10.0, help="Safe Z height")
+@click.option("--angle-start", type=float, default=0.0, help="Start angle in degrees")
+@click.option("--angle-end", type=float, default=360.0, help="End angle in degrees")
+@click.option("--layers", type=int, default=1, help="Number of depth passes")
+@click.pass_context
+def fouraxis(
+    ctx: click.Context,
+    input_file: str,
+    output: str | None,
+    tool_diameter: float,
+    tool_type: str,
+    strategy: str,
+    rotary_axis: str,
+    machine: str,
+    stepover: float,
+    stepdown: float,
+    feed_rate: float,
+    plunge_rate: float,
+    spindle_rpm: int,
+    safe_z: float,
+    angle_start: float,
+    angle_end: float,
+    layers: int,
+) -> None:
+    """
+    Generate 4-axis rotary machining toolpath.
+
+    For cylindrical, conical, and revolution parts using rotary table
+    or spindle tilt (like LUQUE L1530 B-axis).
+
+    Strategies:
+      PARALLELR - Circular passes around the rotary axis (for turning)
+      PARALLEL  - Linear passes along the rotary axis (for surfacing)
+      HELIX     - Continuous spiral path (fast roughing)
+      CROSS     - Both directions for best surface finish
+    """
+    from pycam3d.pipeline_4axis import Pipeline4Axis
+    from pycam3d.gcode_multiaxis import MachineType4Axis
+    from pycam3d.toolpath import Tool
+
+    input_path = Path(input_file)
+    if output is None:
+        output = str(input_path.with_suffix(f".4axis.nc"))
+
+    console.print(Panel.fit(
+        "[bold blue]PyCAM3D 4-Axis Machining[/bold blue]\n"
+        f"Strategy: [cyan]{strategy}[/cyan]\n"
+        f"Rotary Axis: [cyan]{rotary_axis}[/cyan]\n"
+        f"Machine: [cyan]{machine}[/cyan]",
+        border_style="blue"
+    ))
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+    ) as progress:
+        # Create tool
+        if tool_type == "ball":
+            tool = Tool.ball(diameter=tool_diameter)
+        elif tool_type == "flat":
+            tool = Tool.flat(diameter=tool_diameter)
+        else:
+            tool = Tool.bull(diameter=tool_diameter, corner_radius=tool_diameter * 0.1)
+
+        # Get machine type
+        machine_type = MachineType4Axis[machine]
+
+        task = progress.add_task("Loading mesh...", total=None)
+        pipeline = Pipeline4Axis(
+            str(input_path),
+            tool,
+            machine_type=machine_type
+        )
+        progress.update(task, completed=True, description="Mesh loaded")
+
+        # Display mesh info
+        table = Table(title="Part Info")
+        table.add_column("Property", style="cyan")
+        table.add_column("Value", style="green")
+        dims = pipeline.dimensions
+        table.add_row("Dimensions", f"{dims[0]:.1f} × {dims[1]:.1f} × {dims[2]:.1f} mm")
+        table.add_row("Est. Radius", f"{pipeline.radius:.1f} mm")
+        table.add_row("Axis Length", f"{pipeline.axis_length:.1f} mm")
+        console.print(table)
+
+        def progress_cb(pct, msg):
+            progress.update(task, description=f"{msg} ({pct:.0f}%)")
+
+        task = progress.add_task("Generating 4-axis toolpath...", total=None)
+        result = pipeline.generate(
+            strategy=strategy,
+            rotary_axis=rotary_axis,
+            stepover=stepover,
+            stepdown=stepdown,
+            feed_rate=feed_rate,
+            plunge_rate=plunge_rate,
+            spindle_speed=spindle_rpm,
+            num_layers=layers,
+            safe_z=safe_z,
+            angle_start=angle_start,
+            angle_end=angle_end,
+            progress_callback=progress_cb
+        )
+        progress.update(task, completed=True, description="Toolpath generated")
+
+        task = progress.add_task("Saving G-code...", total=None)
+        pipeline.save_gcode(result, output)
+        progress.update(task, completed=True, description="G-code saved")
+
+    # Results
+    result_table = Table(title="4-Axis Results")
+    result_table.add_column("Metric", style="cyan")
+    result_table.add_column("Value", style="green")
+    result_table.add_row("Strategy", strategy)
+    result_table.add_row("Chunks", str(len(result.chunks)))
+    result_table.add_row("Total Points", f"{result.total_points:,}")
+    result_table.add_row("Path Length", f"{result.path_length_mm:.1f} mm")
+    result_table.add_row("Est. Time", f"{result.estimated_time_min:.1f} min")
+
+    if result.sampling_result:
+        hit_rate = result.sampling_result.sampled_points / max(1, result.sampling_result.total_points) * 100
+        result_table.add_row("Sample Hit Rate", f"{hit_rate:.1f}%")
+
+    console.print(result_table)
+    console.print(f"\n[bold green]4-axis G-code saved to: {output}[/bold green]")
+
+
+@main.command(name="4axis-roughing")
+@click.argument("input_file", type=click.Path(exists=True))
+@click.option("-o", "--output", type=click.Path(), help="Output G-code file")
+@click.option("--tool-diameter", "-d", type=float, default=10.0, help="Tool diameter in mm")
+@click.option("--rotary-axis", "-a", type=click.Choice(["X", "Y", "Z"]), default="X")
+@click.option("--stock-to-leave", type=float, default=0.5, help="Stock to leave for finishing (mm)")
+@click.option("--stepdown", type=float, default=5.0, help="Depth per layer (mm)")
+@click.option("--feed-rate", "-f", type=float, default=1500.0, help="Feed rate in mm/min")
+@click.option("--spindle-rpm", "-r", type=int, default=10000, help="Spindle RPM")
+@click.pass_context
+def fouraxis_roughing(
+    ctx: click.Context,
+    input_file: str,
+    output: str | None,
+    tool_diameter: float,
+    rotary_axis: str,
+    stock_to_leave: float,
+    stepdown: float,
+    feed_rate: float,
+    spindle_rpm: int,
+) -> None:
+    """
+    Generate 4-axis roughing toolpath using HELIX strategy.
+
+    Fast material removal with aggressive parameters.
+    """
+    from pycam3d.pipeline_4axis import Pipeline4Axis
+    from pycam3d.gcode_multiaxis import MachineType4Axis
+    from pycam3d.toolpath import Tool
+
+    input_path = Path(input_file)
+    if output is None:
+        output = str(input_path.with_suffix(".4axis-rough.nc"))
+
+    console.print(Panel(f"[bold blue]4-Axis Roughing[/bold blue]\nFile: {input_path.name}"))
+
+    with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console) as progress:
+        tool = Tool.flat(diameter=tool_diameter)
+        task = progress.add_task("Loading...", total=None)
+
+        pipeline = Pipeline4Axis(str(input_path), tool, MachineType4Axis.LUQUE_L1530)
+        progress.update(task, description="Generating roughing...")
+
+        result = pipeline.generate_roughing(
+            rotary_axis=rotary_axis,
+            stepover=tool_diameter * 0.5,
+            stepdown=stepdown,
+            stock_to_leave=stock_to_leave,
+            feed_rate=feed_rate,
+            spindle_speed=spindle_rpm
+        )
+
+        pipeline.save_gcode(result, output)
+        progress.update(task, completed=True)
+
+    console.print(f"\n[green]Roughing G-code saved to: {output}[/green]")
+    console.print(f"Points: {result.total_points:,} | Time: {result.estimated_time_min:.1f} min")
+
+
+@main.command(name="4axis-finishing")
+@click.argument("input_file", type=click.Path(exists=True))
+@click.option("-o", "--output", type=click.Path(), help="Output G-code file")
+@click.option("--tool-diameter", "-d", type=float, default=6.0, help="Ball tool diameter in mm")
+@click.option("--rotary-axis", "-a", type=click.Choice(["X", "Y", "Z"]), default="X")
+@click.option("--stepover", type=float, default=None, help="Stepover (default: 10%% tool for ball)")
+@click.option("--feed-rate", "-f", type=float, default=800.0, help="Feed rate in mm/min")
+@click.option("--spindle-rpm", "-r", type=int, default=15000, help="Spindle RPM")
+@click.pass_context
+def fouraxis_finishing(
+    ctx: click.Context,
+    input_file: str,
+    output: str | None,
+    tool_diameter: float,
+    rotary_axis: str,
+    stepover: float | None,
+    feed_rate: float,
+    spindle_rpm: int,
+) -> None:
+    """
+    Generate 4-axis finishing toolpath using PARALLELR strategy.
+
+    Fine stepover for high surface quality.
+    """
+    from pycam3d.pipeline_4axis import Pipeline4Axis
+    from pycam3d.gcode_multiaxis import MachineType4Axis
+    from pycam3d.toolpath import Tool
+
+    input_path = Path(input_file)
+    if output is None:
+        output = str(input_path.with_suffix(".4axis-finish.nc"))
+
+    console.print(Panel(f"[bold blue]4-Axis Finishing[/bold blue]\nFile: {input_path.name}"))
+
+    with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console) as progress:
+        tool = Tool.ball(diameter=tool_diameter)
+        task = progress.add_task("Loading...", total=None)
+
+        pipeline = Pipeline4Axis(str(input_path), tool, MachineType4Axis.LUQUE_L1530)
+        progress.update(task, description="Generating finishing...")
+
+        result = pipeline.generate_finishing(
+            rotary_axis=rotary_axis,
+            stepover=stepover,
+            feed_rate=feed_rate,
+            spindle_speed=spindle_rpm
+        )
+
+        pipeline.save_gcode(result, output)
+        progress.update(task, completed=True)
+
+    console.print(f"\n[green]Finishing G-code saved to: {output}[/green]")
+    console.print(f"Points: {result.total_points:,} | Time: {result.estimated_time_min:.1f} min")
+
+
 @main.command()
 @click.argument("input_file", type=click.Path(exists=True))
 @click.pass_context
