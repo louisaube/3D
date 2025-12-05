@@ -13,6 +13,13 @@ Advanced strategies include:
 - Spiral: Continuous spiral toolpaths
 - Voronoi/Medial Axis: Optimal pocketing from center outward
 
+4-Axis machining (ported from Fabex):
+- PARALLELR: Passes around the rotary axis
+- PARALLEL: Passes along the rotary axis
+- HELIX: Continuous helical path
+- Surface sampling with collision detection
+- Multi-axis G-code generation
+
 Smart features:
 - Machine database with limits and post-processors
 - Materials database with feeds/speeds calculation
@@ -115,6 +122,35 @@ from pycam3d.simulation import (
     create_simulation_from_gcode,
 )
 
+# 4-Axis machining (ported from Fabex)
+from pycam3d.chunk import (
+    AxisRotation,
+    CamPathChunk4Axis,
+    merge_chunks,
+    sort_chunks_by_distance,
+)
+from pycam3d.patterns.rotary import (
+    RotaryPatternGenerator,
+    RotaryStrategy,
+)
+from pycam3d.collision.sampler_4axis import (
+    NAxisSampler,
+    SamplingResult,
+    AdaptiveSampler,
+)
+from pycam3d.gcode_multiaxis import (
+    GCodeGenerator4Axis,
+    MachineType4Axis,
+    MachineConfig4Axis,
+    get_machine_config_4axis,
+    gcode_4axis_from_chunks,
+)
+from pycam3d.pipeline_4axis import (
+    Pipeline4Axis,
+    Pipeline4AxisResult,
+    quick_4axis,
+)
+
 __all__ = [
     # Core
     "MeshProcessor",
@@ -189,4 +225,22 @@ __all__ = [
     "MaterialRemovalSimulator",
     "create_simulation_from_toolpath",
     "create_simulation_from_gcode",
+    # 4-Axis machining
+    "AxisRotation",
+    "CamPathChunk4Axis",
+    "merge_chunks",
+    "sort_chunks_by_distance",
+    "RotaryPatternGenerator",
+    "RotaryStrategy",
+    "NAxisSampler",
+    "SamplingResult",
+    "AdaptiveSampler",
+    "GCodeGenerator4Axis",
+    "MachineType4Axis",
+    "MachineConfig4Axis",
+    "get_machine_config_4axis",
+    "gcode_4axis_from_chunks",
+    "Pipeline4Axis",
+    "Pipeline4AxisResult",
+    "quick_4axis",
 ]
