@@ -1004,5 +1004,304 @@ def curvature(ctx: click.Context, input_file: str) -> None:
         console.print("\n[green]Relatively flat surface. Standard parallel strategy should work well.[/green]")
 
 
+# =============================================================================
+# DATABASE COMMANDS
+# =============================================================================
+
+@main.command()
+@click.pass_context
+def machines(ctx: click.Context) -> None:
+    """
+    List available CNC machines in the database.
+    """
+    from pycam3d.machines import MachineDatabase
+
+    db = MachineDatabase()
+
+    table = Table(title="Available Machines")
+    table.add_column("Name", style="cyan")
+    table.add_column("Type", style="green")
+    table.add_column("Envelope (X×Y×Z)", style="yellow")
+    table.add_column("Post-Proc", style="blue")
+
+    for name in sorted(db.list_all()):
+        m = db.get(name)
+        envelope = f"{m.envelope.x_travel:.0f}×{m.envelope.y_travel:.0f}×{m.envelope.z_travel:.0f}"
+        table.add_row(name, m.machine_type.value, envelope, m.post_processor.value)
+
+    console.print(table)
+    console.print(f"\n[dim]Total: {len(db.list_all())} machines[/dim]")
+
+
+@main.command()
+@click.pass_context
+def materials(ctx: click.Context) -> None:
+    """
+    List available materials in the database.
+    """
+    from pycam3d.materials import MaterialDatabase
+
+    db = MaterialDatabase()
+
+    table = Table(title="Available Materials")
+    table.add_column("Name", style="cyan")
+    table.add_column("Category", style="green")
+    table.add_column("SFM Range", style="yellow")
+    table.add_column("Notes", style="dim")
+
+    for name in sorted(db.list_all()):
+        m = db.get(name)
+        sfm = f"{m.surface_speed_min:.0f}-{m.surface_speed_max:.0f}"
+        notes = []
+        if m.use_coolant:
+            notes.append("coolant")
+        if m.use_air_blast:
+            notes.append("air")
+        table.add_row(name, m.category.value, sfm, ", ".join(notes))
+
+    console.print(table)
+    console.print(f"\n[dim]Total: {len(db.list_all())} materials[/dim]")
+
+
+@main.command()
+@click.argument("input_file", type=click.Path(exists=True))
+@click.option("--machine", "-m", default="shapeoko-4", help="Machine name from database")
+@click.option("--material", "-M", default="plywood", help="Material name from database")
+@click.option("-o", "--output", type=click.Path(), help="Output G-code file")
+@click.pass_context
+def auto(
+    ctx: click.Context,
+    input_file: str,
+    machine: str,
+    material: str,
+    output: str | None,
+) -> None:
+    """
+    Automatically generate toolpath with smart defaults.
+
+    Uses the decision engine to analyze the part and recommend
+    optimal settings based on machine and material.
+    """
+    import trimesh
+    from pycam3d.decision import DecisionEngine, MachiningIntent
+    from pycam3d.pipeline import CAMPipeline, CAMJob
+    from pycam3d.toolpath import Tool
+
+    input_path = Path(input_file)
+    if output is None:
+        output = str(input_path.with_suffix(".auto.nc"))
+
+    console.print(Panel.fit(
+        "[bold blue]PyCAM3D Auto Mode[/bold blue]\n"
+        f"Machine: [cyan]{machine}[/cyan]\n"
+        f"Material: [cyan]{material}[/cyan]",
+        border_style="blue"
+    ))
+
+    with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console) as progress:
+        # Load mesh
+        task = progress.add_task("Loading mesh...", total=None)
+        mesh = trimesh.load_mesh(input_path)
+        progress.update(task, completed=True, description="Mesh loaded")
+
+        # Analyze with decision engine
+        task = progress.add_task("Analyzing part...", total=None)
+        engine = DecisionEngine()
+        plan = engine.generate_plan(
+            mesh=mesh,
+            machine_name=machine,
+            material_name=material,
+            intent=MachiningIntent.REPRODUCE_EXACT,
+        )
+        progress.update(task, completed=True, description="Analysis complete")
+
+    # Display analysis results
+    console.print()
+
+    # Issues
+    if plan.issues:
+        issue_table = Table(title="Analysis Results")
+        issue_table.add_column("Level", style="bold")
+        issue_table.add_column("Message")
+        for issue in plan.issues:
+            level_color = {
+                "info": "blue",
+                "warning": "yellow",
+                "error": "red",
+                "critical": "red bold",
+            }.get(issue.level.value, "white")
+            issue_table.add_row(f"[{level_color}]{issue.level.value.upper()}[/{level_color}]", issue.message)
+        console.print(issue_table)
+
+    # Accessibility
+    console.print(f"\n[cyan]Accessibility:[/cyan] {plan.accessibility.accessible_percentage:.1f}%")
+    if plan.accessibility.critical_undercuts:
+        console.print(f"[yellow]Warning: {len(plan.accessibility.critical_undercuts)} undercut regions detected[/yellow]")
+
+    # Recommended operations
+    ops_table = Table(title="Recommended Operations")
+    ops_table.add_column("Operation", style="cyan")
+    ops_table.add_column("Strategy", style="green")
+    ops_table.add_column("Tool", style="yellow")
+    ops_table.add_column("RPM", style="blue")
+    ops_table.add_column("Feed", style="blue")
+    ops_table.add_column("Time", style="magenta")
+
+    for op in plan.operations:
+        ops_table.add_row(
+            op.name,
+            op.strategy,
+            f"{op.tool.tool_type} {op.tool.diameter}mm",
+            str(op.params.rpm),
+            f"{op.params.feed_rate:.0f}",
+            f"{op.params.estimated_time_min:.0f} min",
+        )
+
+    console.print(ops_table)
+    console.print(f"\n[bold]Total estimated time: {plan.total_time_min:.0f} minutes ({plan.total_time_min/60:.1f} hours)[/bold]")
+
+    if plan.has_errors:
+        console.print("\n[red bold]Cannot proceed due to errors. Fix issues above first.[/red bold]")
+        return
+
+    # Generate toolpath
+    console.print()
+    with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console) as progress:
+        task = progress.add_task("Generating toolpath...", total=None)
+
+        # Use first finishing operation settings
+        finish_op = next((op for op in plan.operations if op.operation_type == "finishing"), plan.operations[-1])
+
+        pipeline = CAMPipeline()
+        pipeline.load_mesh(input_path)
+        pipeline.prepare_mesh(repair=True, center=True, place_on_bed=True)
+
+        tool = Tool.ball(diameter=finish_op.tool.diameter) if finish_op.tool.tool_type == "ball" else Tool.flat(diameter=finish_op.tool.diameter)
+
+        job = CAMJob(
+            finishing_tool=tool,
+            finishing_stepover=finish_op.params.stepover / finish_op.tool.diameter,
+            feed_rate=finish_op.params.feed_rate,
+            spindle_rpm=finish_op.params.rpm,
+            safe_z=10.0,
+        )
+
+        result = pipeline.run(job)
+        progress.update(task, description="Toolpath generated")
+
+        task = progress.add_task("Saving G-code...", total=None)
+        result.gcode.save(output)
+        progress.update(task, completed=True, description="G-code saved")
+
+    # Final results
+    result_table = Table(title="Results")
+    result_table.add_column("Metric", style="cyan")
+    result_table.add_column("Value", style="green")
+
+    if result.finishing_toolpath:
+        result_table.add_row("Toolpath Points", f"{len(result.finishing_toolpath):,}")
+        result_table.add_row("Toolpath Length", f"{result.finishing_toolpath.get_total_length():.1f} mm")
+
+    result_table.add_row("G-code Lines", f"{len(result.gcode):,}")
+    console.print(result_table)
+
+    console.print(f"\n[bold green]G-code saved to: {output}[/bold green]")
+
+
+@main.command()
+@click.argument("input_file", type=click.Path(exists=True))
+@click.pass_context
+def analyze(ctx: click.Context, input_file: str) -> None:
+    """
+    Analyze a mesh for machining feasibility.
+
+    Checks accessibility, recommends orientation, and identifies issues.
+    """
+    import trimesh
+    from pycam3d.orientation import OrientationOptimizer
+    from pycam3d.decision import DecisionEngine
+    import numpy as np
+
+    input_path = Path(input_file)
+
+    console.print(Panel.fit(
+        f"[bold blue]Part Analysis[/bold blue]\n{input_path.name}",
+        border_style="blue"
+    ))
+
+    with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console) as progress:
+        task = progress.add_task("Loading mesh...", total=None)
+        mesh = trimesh.load_mesh(input_path)
+        progress.update(task, completed=True)
+
+        task = progress.add_task("Analyzing accessibility...", total=None)
+        vertices = np.array(mesh.vertices)
+        faces = np.array(mesh.faces)
+        normals = np.array(mesh.face_normals)
+
+        optimizer = OrientationOptimizer(vertices, faces, normals)
+        orientation, accessibility = optimizer.find_optimal_orientation()
+        progress.update(task, completed=True)
+
+    # Part size
+    bounds_min = vertices.min(axis=0)
+    bounds_max = vertices.max(axis=0)
+    size = bounds_max - bounds_min
+
+    size_table = Table(title="Part Dimensions")
+    size_table.add_column("Dimension", style="cyan")
+    size_table.add_column("Value", style="green")
+    size_table.add_row("X (Length)", f"{size[0]:.1f} mm")
+    size_table.add_row("Y (Width)", f"{size[1]:.1f} mm")
+    size_table.add_row("Z (Height)", f"{size[2]:.1f} mm")
+    size_table.add_row("Volume", f"{float(mesh.volume):.1f} mm³" if hasattr(mesh, 'volume') else "N/A")
+    console.print(size_table)
+
+    # Accessibility
+    access_table = Table(title="Accessibility Analysis")
+    access_table.add_column("Metric", style="cyan")
+    access_table.add_column("Value", style="green")
+    access_table.add_row("Accessible Surface", f"{accessibility.accessible_percentage:.1f}%")
+    access_table.add_row("Undercut Area", f"{accessibility.undercut_area:.1f} mm²")
+    access_table.add_row("Critical Undercuts", str(len(accessibility.critical_undercuts)))
+
+    if accessibility.fully_accessible:
+        access_table.add_row("Status", "[green]Fully machinable from top[/green]")
+    elif accessibility.accessible_percentage > 80:
+        access_table.add_row("Status", "[yellow]Mostly accessible, minor undercuts[/yellow]")
+    else:
+        access_table.add_row("Status", "[red]Significant undercuts - multi-setup needed[/red]")
+
+    console.print(access_table)
+
+    # Recommended orientation
+    if orientation:
+        orient_table = Table(title="Recommended Orientation")
+        orient_table.add_column("Axis", style="cyan")
+        orient_table.add_column("Rotation", style="green")
+        orient_table.add_row("X", f"{orientation.rotation_x:.1f}°")
+        orient_table.add_row("Y", f"{orientation.rotation_y:.1f}°")
+        orient_table.add_row("Z", f"{orientation.rotation_z:.1f}°")
+        console.print(orient_table)
+
+    # Machine recommendations
+    engine = DecisionEngine()
+    recommendations = engine.recommend_machine(size)[:5]
+
+    if recommendations:
+        machine_table = Table(title="Compatible Machines")
+        machine_table.add_column("Machine", style="cyan")
+        machine_table.add_column("Envelope", style="green")
+        machine_table.add_column("Issues", style="yellow")
+
+        for machine, issues in recommendations:
+            issue_count = len([i for i in issues if i.level.value in ["warning", "error"]])
+            issue_str = f"{issue_count} warnings" if issue_count else "[green]OK[/green]"
+            envelope = f"{machine.envelope.x_travel:.0f}×{machine.envelope.y_travel:.0f}×{machine.envelope.z_travel:.0f}"
+            machine_table.add_row(machine.name, envelope, issue_str)
+
+        console.print(machine_table)
+
+
 if __name__ == "__main__":
     main()

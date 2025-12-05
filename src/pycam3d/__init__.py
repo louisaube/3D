@@ -12,6 +12,13 @@ Advanced strategies include:
 - Trochoidal: Constant engagement angle milling
 - Spiral: Continuous spiral toolpaths
 - Voronoi/Medial Axis: Optimal pocketing from center outward
+
+Smart features:
+- Machine database with limits and post-processors
+- Materials database with feeds/speeds calculation
+- Automatic part orientation optimization
+- Accessibility and undercut detection
+- Smart decision engine for automatic settings
 """
 
 __version__ = "0.1.0"
@@ -36,6 +43,53 @@ from pycam3d.strategies import (
     VoronoiPocketGenerator,
 )
 
+# Machine and material databases
+from pycam3d.machines import (
+    Machine,
+    MachineDatabase,
+    MachineType,
+    PostProcessor,
+    get_machine,
+    list_machines,
+)
+from pycam3d.materials import (
+    Material,
+    MaterialDatabase,
+    MaterialCategory,
+    FeedsSpeedsCalculator,
+    CuttingParameters,
+    get_material,
+    list_materials,
+    calculate_feeds_speeds,
+)
+
+# Stock and workholding
+from pycam3d.stock import (
+    Stock,
+    StockManager,
+    WorkholdingSetup,
+    WorkholdingType,
+)
+
+# Orientation and accessibility
+from pycam3d.orientation import (
+    Orientation,
+    AccessibilityAnalyzer,
+    AccessibilityAnalysis,
+    OrientationOptimizer,
+    find_optimal_orientation,
+    analyze_mesh_accessibility,
+)
+
+# Decision engine
+from pycam3d.decision import (
+    DecisionEngine,
+    MachiningIntent,
+    MachiningPlan,
+    auto_plan,
+    quick_settings,
+)
+
 __all__ = [
     # Core
     "MeshProcessor",
@@ -57,4 +111,38 @@ __all__ = [
     "TrochoidalParams",
     "SpiralGenerator",
     "VoronoiPocketGenerator",
+    # Machines
+    "Machine",
+    "MachineDatabase",
+    "MachineType",
+    "PostProcessor",
+    "get_machine",
+    "list_machines",
+    # Materials
+    "Material",
+    "MaterialDatabase",
+    "MaterialCategory",
+    "FeedsSpeedsCalculator",
+    "CuttingParameters",
+    "get_material",
+    "list_materials",
+    "calculate_feeds_speeds",
+    # Stock
+    "Stock",
+    "StockManager",
+    "WorkholdingSetup",
+    "WorkholdingType",
+    # Orientation
+    "Orientation",
+    "AccessibilityAnalyzer",
+    "AccessibilityAnalysis",
+    "OrientationOptimizer",
+    "find_optimal_orientation",
+    "analyze_mesh_accessibility",
+    # Decision
+    "DecisionEngine",
+    "MachiningIntent",
+    "MachiningPlan",
+    "auto_plan",
+    "quick_settings",
 ]
