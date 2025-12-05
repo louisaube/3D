@@ -420,18 +420,19 @@ class TestNAxisSampler:
 
         sampler = NAxisSampler(cylinder_mesh, simple_tool)
 
-        # Ray from outside pointing toward center
-        start = np.array([0, 0, 50])  # Outside
-        end = np.array([0, 0, 0])     # Center
+        # Ray from outside the cylinder radially inward (cylinder is Z-aligned)
+        # Start outside radius=25, end at center
+        start = np.array([50, 0, 25])  # Outside cylinder radius
+        end = np.array([0, 0, 25])     # At center, same Z
         rot = AxisRotation()
 
         result = sampler.sample_point(start, end, rot)
 
         # Should hit the cylinder surface
         assert result is not None
-        # Should be around radius 25 from center
+        # Result should be on/near cylinder surface (radius ~25 from Z axis)
         dist_from_axis = np.sqrt(result[0]**2 + result[1]**2)
-        assert abs(dist_from_axis - 25) < 5  # Within tolerance
+        assert abs(dist_from_axis - 25) < 10  # Within tolerance (includes tool offset)
 
     def test_sample_chunks(self, cylinder_mesh, simple_tool):
         """Test sampling multiple chunks."""

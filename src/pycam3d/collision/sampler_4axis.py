@@ -340,6 +340,7 @@ class NAxisSampler:
                     depth = np.linalg.norm(sampled_point - startpoint)
 
                     # Find appropriate layer
+                    point_added = False
                     for layer_idx, (layer_start, layer_end) in enumerate(layers):
                         if layer_start <= depth <= layer_end:
                             layer_chunks[layer_idx].add_point(
@@ -348,7 +349,17 @@ class NAxisSampler:
                                 endpoint=tuple(endpoint),
                                 rotation=rotation
                             )
+                            point_added = True
                             break
+
+                    # If no layer matched, add to first layer (most common case)
+                    if not point_added:
+                        layer_chunks[0].add_point(
+                            point=tuple(sampled_point),
+                            startpoint=tuple(startpoint),
+                            endpoint=tuple(endpoint),
+                            rotation=rotation
+                        )
                 else:
                     result.missed_points += 1
                     # Use startpoint as fallback (air cut)
