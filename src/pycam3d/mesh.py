@@ -44,6 +44,7 @@ class MeshStats:
     surface_area: float
 
     def __str__(self) -> str:
+        volume_str = f"{self.volume:.2f}" if self.volume is not None else "N/A"
         return (
             f"MeshStats(\n"
             f"  vertices: {self.vertex_count:,}\n"
@@ -51,7 +52,7 @@ class MeshStats:
             f"  watertight: {self.is_watertight}\n"
             f"  winding_consistent: {self.is_winding_consistent}\n"
             f"  bounds: {self.bounds_min} -> {self.bounds_max}\n"
-            f"  volume: {self.volume:.2f if self.volume else 'N/A'}\n"
+            f"  volume: {volume_str}\n"
             f"  surface_area: {self.surface_area:.2f}\n"
             f")"
         )
@@ -266,9 +267,17 @@ class MeshProcessor:
         initial_verts = len(self._mesh.vertices)
         initial_faces = len(self._mesh.faces)
 
+        # Merge duplicate vertices
         self._mesh.merge_vertices()
-        self._mesh.remove_duplicate_faces()
-        self._mesh.remove_degenerate_faces()
+
+        # Remove degenerate faces (using nondegenerate_faces mask)
+        if hasattr(self._mesh, 'nondegenerate_faces'):
+            valid_faces = self._mesh.nondegenerate_faces()
+            if not np.all(valid_faces):
+                self._mesh.update_faces(valid_faces)
+
+        # Remove unreferenced vertices
+        self._mesh.remove_unreferenced_vertices()
 
         verts_removed = initial_verts - len(self._mesh.vertices)
         faces_removed = initial_faces - len(self._mesh.faces)

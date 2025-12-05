@@ -21,6 +21,17 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 
+def _import_ocl():
+    """Import opencamlib with proper error handling."""
+    try:
+        import opencamlib as ocl
+        return ocl
+    except ImportError:
+        raise ImportError(
+            "OpenCAMLib is required. Install with: pip install opencamlib"
+        )
+
+
 class ToolType(Enum):
     """Available tool types."""
 
@@ -208,12 +219,7 @@ class ToolpathGenerator:
         Args:
             filepath: Path to the STL file.
         """
-        try:
-            import ocl
-        except ImportError:
-            raise ImportError(
-                "OpenCAMLib is required. Install with: pip install opencamlib"
-            )
+        ocl = _import_ocl()
 
         filepath = Path(filepath)
         if not filepath.exists():
@@ -221,13 +227,12 @@ class ToolpathGenerator:
 
         logger.info(f"Loading STL surface from {filepath}")
 
+        # Use STLReader to load the STL
         self._stl_surface = ocl.STLSurf()
-        self._stl_surface.readFile(str(filepath))
+        reader = ocl.STLReader(str(filepath), self._stl_surface)
 
-        # Get bounds from the STL
-        # OpenCAMLib doesn't expose bounds directly, so we load with trimesh too
+        # Get bounds from the STL using trimesh
         import trimesh
-
         mesh = trimesh.load(filepath)
         self._bounds = (mesh.bounds[0], mesh.bounds[1])
 
@@ -242,13 +247,6 @@ class ToolpathGenerator:
         Args:
             mesh: A trimesh.Trimesh object.
         """
-        try:
-            import ocl
-        except ImportError:
-            raise ImportError(
-                "OpenCAMLib is required. Install with: pip install opencamlib"
-            )
-
         import tempfile
 
         # Export mesh to temporary STL file
@@ -263,9 +261,7 @@ class ToolpathGenerator:
 
     def _create_ocl_cutter(self, tool: Tool):
         """Create an OpenCAMLib cutter from a Tool definition."""
-        import ocl
-
-        radius = tool.diameter / 2.0
+        ocl = _import_ocl()
 
         if tool.type == ToolType.BALL:
             return ocl.BallCutter(tool.diameter, tool.length)
@@ -299,7 +295,7 @@ class ToolpathGenerator:
         Returns:
             Generated toolpath.
         """
-        import ocl
+        ocl = _import_ocl()
 
         if self._stl_surface is None:
             raise ValueError("No STL surface loaded")
@@ -309,62 +305,73 @@ class ToolpathGenerator:
         cutter = self._create_ocl_cutter(tool)
         bounds_min, bounds_max = self._bounds
 
-        # Create drop-cutter operation
-        dc = ocl.DropCutter()
-        dc.setSTL(self._stl_surface)
-        dc.setCutter(cutter)
-
         toolpath = Toolpath(tool=tool, strategy=strategy, safe_z=z_safe)
 
         # Determine scan direction
         if strategy in (Strategy.PARALLEL_X, Strategy.ZIGZAG_X):
             primary_axis = "y"
-            secondary_axis = "x"
             primary_range = np.arange(
-                bounds_min[1] - margin, bounds_max[1] + margin, stepover
+                bounds_min[1] - margin, bounds_max[1] + margin + stepover, stepover
             )
             secondary_range = np.linspace(
                 bounds_min[0] - margin, bounds_max[0] + margin, 100
             )
         else:
             primary_axis = "x"
-            secondary_axis = "y"
             primary_range = np.arange(
-                bounds_min[0] - margin, bounds_max[0] + margin, stepover
+                bounds_min[0] - margin, bounds_max[0] + margin + stepover, stepover
             )
             secondary_range = np.linspace(
                 bounds_min[1] - margin, bounds_max[1] + margin, 100
             )
 
         zigzag = strategy in (Strategy.ZIGZAG_X, Strategy.ZIGZAG_Y)
+        z_min = bounds_min[2] - 10  # Floor below the part
 
-        # Generate toolpath
+        # Generate toolpath line by line using PathDropCutter
         for i, primary in enumerate(primary_range):
-            # Add rapid to start of line
-            if primary_axis == "y":
-                start_x = secondary_range[0] if not (zigzag and i % 2) else secondary_range[-1]
-                toolpath.add_point(start_x, primary, z_safe, rapid=True)
-            else:
-                start_y = secondary_range[0] if not (zigzag and i % 2) else secondary_range[-1]
-                toolpath.add_point(primary, start_y, z_safe, rapid=True)
+            # Create path drop cutter for this line
+            pdc = ocl.PathDropCutter()
+            pdc.setSTL(self._stl_surface)
+            pdc.setCutter(cutter)
+            pdc.setZ(z_min)
+            pdc.setSampling(0.5)  # Sampling along the path
 
-            # Calculate points along this line
+            # Calculate line endpoints
             line_secondary = secondary_range if not (zigzag and i % 2) else secondary_range[::-1]
 
-            for secondary in line_secondary:
-                if primary_axis == "y":
-                    x, y = secondary, primary
-                else:
-                    x, y = primary, secondary
+            if primary_axis == "y":
+                start_x, start_y = line_secondary[0], primary
+                end_x, end_y = line_secondary[-1], primary
+            else:
+                start_x, start_y = primary, line_secondary[0]
+                end_x, end_y = primary, line_secondary[-1]
 
-                # Drop cutter to surface
-                cl_point = ocl.CLPoint(x, y, bounds_max[2] + tool.length)
-                dc.dropCutter(cl_point)
+            # Create path with single line
+            path = ocl.Path()
+            start_pt = ocl.Point(start_x, start_y, bounds_max[2] + 50)
+            end_pt = ocl.Point(end_x, end_y, bounds_max[2] + 50)
+            line = ocl.Line(start_pt, end_pt)
+            path.append(line)
 
-                toolpath.add_point(cl_point.x, cl_point.y, cl_point.z)
+            pdc.setPath(path)
+            pdc.run()
 
-            # Retract at end of line
-            toolpath.add_point(toolpath.points[-1].x, toolpath.points[-1].y, z_safe, rapid=True)
+            # Get results
+            cl_points = pdc.getCLPoints()
+
+            # Add rapid to start of line
+            if cl_points:
+                first_pt = cl_points[0]
+                toolpath.add_point(first_pt.x, first_pt.y, z_safe, rapid=True)
+
+                # Add cutting points
+                for cl_pt in cl_points:
+                    toolpath.add_point(cl_pt.x, cl_pt.y, cl_pt.z)
+
+                # Retract at end of line
+                last_pt = cl_points[-1]
+                toolpath.add_point(last_pt.x, last_pt.y, z_safe, rapid=True)
 
         toolpath.optimize()
         logger.info(f"Generated {len(toolpath)} toolpath points")
@@ -394,7 +401,7 @@ class ToolpathGenerator:
         Returns:
             Generated toolpath.
         """
-        import ocl
+        ocl = _import_ocl()
 
         if self._stl_surface is None:
             raise ValueError("No STL surface loaded")
@@ -412,7 +419,7 @@ class ToolpathGenerator:
         toolpath = Toolpath(tool=tool, strategy=Strategy.WATERLINE, safe_z=z_safe)
 
         # Generate waterlines at each Z level
-        z_levels = np.arange(z_min, z_max, z_step)
+        z_levels = np.arange(z_min + z_step, z_max, z_step)
 
         for z in z_levels:
             logger.debug(f"Generating waterline at Z={z:.2f}")
@@ -474,7 +481,7 @@ class ToolpathGenerator:
         Returns:
             Generated toolpath.
         """
-        import ocl
+        ocl = _import_ocl()
 
         if self._stl_surface is None:
             raise ValueError("No STL surface loaded")
@@ -484,53 +491,69 @@ class ToolpathGenerator:
             f"stepover={stepover}mm, z_step={z_step}mm"
         )
 
-        cutter = self._create_ocl_cutter(tool)
         bounds_min, bounds_max = self._bounds
 
         toolpath = Toolpath(tool=tool, strategy=Strategy.ZIGZAG_X, safe_z=z_safe)
 
-        # Create offset surface for stock to leave
-        # For roughing, we effectively use a larger tool
-        rough_cutter = self._create_ocl_cutter(
-            Tool(
-                type=tool.type,
-                diameter=tool.diameter + 2 * stock_to_leave,
-                length=tool.length,
-                corner_radius=tool.corner_radius + stock_to_leave if tool.corner_radius else 0,
-            )
+        # Create offset cutter for stock to leave
+        rough_tool = Tool(
+            type=tool.type,
+            diameter=tool.diameter + 2 * stock_to_leave,
+            length=tool.length,
+            corner_radius=tool.corner_radius + stock_to_leave if tool.corner_radius else 0,
         )
-
-        dc = ocl.DropCutter()
-        dc.setSTL(self._stl_surface)
-        dc.setCutter(rough_cutter)
+        rough_cutter = self._create_ocl_cutter(rough_tool)
 
         # Generate Z levels from top to bottom
-        z_levels = np.arange(bounds_max[2], bounds_min[2], -z_step)
+        z_levels = np.arange(bounds_max[2], bounds_min[2] - z_step, -z_step)
 
-        x_range = np.arange(bounds_min[0] - stepover, bounds_max[0] + stepover, stepover)
-        y_samples = 100
+        x_range = np.arange(bounds_min[0] - stepover, bounds_max[0] + stepover * 2, stepover)
+        y_samples = 50
+
+        z_min = bounds_min[2] - 10  # Floor below the part
 
         for layer_idx, z_target in enumerate(z_levels):
             logger.debug(f"Generating roughing layer at Z={z_target:.2f}")
 
             for i, x in enumerate(x_range):
-                y_range = np.linspace(bounds_min[1], bounds_max[1], y_samples)
+                y_start = bounds_min[1]
+                y_end = bounds_max[1]
                 if i % 2 == 1:
-                    y_range = y_range[::-1]
+                    y_start, y_end = y_end, y_start
+
+                # Create path drop cutter for this line
+                pdc = ocl.PathDropCutter()
+                pdc.setSTL(self._stl_surface)
+                pdc.setCutter(rough_cutter)
+                pdc.setZ(z_min)
+                pdc.setSampling(stepover / 2)
+
+                # Create path
+                path = ocl.Path()
+                start_pt = ocl.Point(x, y_start, bounds_max[2] + 50)
+                end_pt = ocl.Point(x, y_end, bounds_max[2] + 50)
+                line = ocl.Line(start_pt, end_pt)
+                path.append(line)
+
+                pdc.setPath(path)
+                pdc.run()
+                cl_points = pdc.getCLPoints()
+
+                if not cl_points:
+                    continue
 
                 # Rapid to start
-                toolpath.add_point(x, y_range[0], z_safe, rapid=True)
+                first_pt = cl_points[0]
+                toolpath.add_point(first_pt.x, first_pt.y, z_safe, rapid=True)
 
-                for y in y_range:
-                    cl_point = ocl.CLPoint(x, y, bounds_max[2] + tool.length)
-                    dc.dropCutter(cl_point)
-
+                for cl_pt in cl_points:
                     # Use the higher of drop-cutter result or current layer Z
-                    z = max(cl_point.z, z_target)
-                    toolpath.add_point(x, y, z)
+                    z = max(cl_pt.z, z_target)
+                    toolpath.add_point(cl_pt.x, cl_pt.y, z)
 
                 # Retract
-                toolpath.add_point(x, y_range[-1], z_safe, rapid=True)
+                last_pt = cl_points[-1]
+                toolpath.add_point(last_pt.x, last_pt.y, z_safe, rapid=True)
 
         toolpath.optimize()
         logger.info(f"Generated {len(toolpath)} toolpath points")
