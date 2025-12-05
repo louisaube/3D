@@ -15,11 +15,37 @@ import logging
 import tempfile
 import uuid
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, TYPE_CHECKING
 
 import numpy as np
 
+# Import FastAPI types for annotations (lazy import actual modules in create_app)
+try:
+    from fastapi import FastAPI, File, UploadFile, HTTPException
+    from fastapi.responses import HTMLResponse, JSONResponse
+    from pydantic import BaseModel
+    FASTAPI_AVAILABLE = True
+except ImportError:
+    FASTAPI_AVAILABLE = False
+    # Define stubs for type checking
+    UploadFile = Any
+    File = None
+
 logger = logging.getLogger(__name__)
+
+
+# Define request model at module level for FastAPI annotation resolution
+if FASTAPI_AVAILABLE:
+    class ToolpathRequest(BaseModel):
+        """Request model for toolpath generation."""
+        mesh_id: str
+        strategy: str = "iso-scallop"
+        tool_type: str = "ball"
+        tool_diameter: float = 6.0
+        stepover: float = 0.15
+        feed_rate: float = 1000.0
+        spindle_rpm: int = 12000
+
 
 # HTML template with Three.js visualization
 HTML_TEMPLATE = """
@@ -552,11 +578,7 @@ HTML_TEMPLATE = """
 
 def create_app():
     """Create FastAPI application."""
-    try:
-        from fastapi import FastAPI, File, UploadFile, HTTPException
-        from fastapi.responses import HTMLResponse, JSONResponse
-        from pydantic import BaseModel
-    except ImportError:
+    if not FASTAPI_AVAILABLE:
         raise ImportError("FastAPI required: pip install fastapi uvicorn python-multipart")
 
     import trimesh
@@ -565,15 +587,6 @@ def create_app():
 
     # Store uploaded meshes temporarily
     mesh_store: Dict[str, Any] = {}
-
-    class ToolpathRequest(BaseModel):
-        mesh_id: str
-        strategy: str = "iso-scallop"
-        tool_type: str = "ball"
-        tool_diameter: float = 6.0
-        stepover: float = 0.15
-        feed_rate: float = 1000.0
-        spindle_rpm: int = 12000
 
     @app.get("/", response_class=HTMLResponse)
     async def index():
