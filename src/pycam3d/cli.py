@@ -705,6 +705,230 @@ def trochoidal(
 @main.command()
 @click.argument("input_file", type=click.Path(exists=True))
 @click.pass_context
+def wizard(ctx: click.Context, input_file: str) -> None:
+    """
+    Interactive wizard for toolpath generation.
+
+    Guides you through the complete workflow with simple questions:
+    mesh analysis, tool selection, strategy choice, and G-code output.
+    """
+    import questionary
+    from pycam3d.mesh import MeshProcessor
+    from pycam3d.pipeline import CAMPipeline, CAMJob
+    from pycam3d.toolpath import Tool
+
+    input_path = Path(input_file)
+
+    console.print(Panel.fit(
+        "[bold blue]PyCAM3D Wizard[/bold blue]\n"
+        "Interactive toolpath generation",
+        border_style="blue"
+    ))
+
+    # Load and analyze mesh
+    console.print("\n[cyan]Step 1: Analyzing mesh...[/cyan]")
+    with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console) as progress:
+        task = progress.add_task("Loading mesh...", total=None)
+        processor = MeshProcessor()
+        processor.load_mesh(input_path)
+        stats = processor.get_stats()
+        progress.update(task, completed=True, description="Mesh loaded")
+
+    # Display mesh info
+    table = Table(title="Mesh Analysis")
+    table.add_column("Property", style="cyan")
+    table.add_column("Value", style="green")
+    table.add_row("Vertices", f"{stats.vertex_count:,}")
+    table.add_row("Faces", f"{stats.face_count:,}")
+    table.add_row("Watertight", "Yes ✓" if stats.is_watertight else "No ✗")
+    size = stats.bounds_max - stats.bounds_min
+    table.add_row("Size", f"{size[0]:.1f} × {size[1]:.1f} × {size[2]:.1f} mm")
+    console.print(table)
+
+    # Repair mesh if needed
+    if not stats.is_watertight:
+        repair = questionary.confirm(
+            "Mesh is not watertight. Repair it?",
+            default=True
+        ).ask()
+        if repair:
+            with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console) as progress:
+                task = progress.add_task("Repairing mesh...", total=None)
+                processor.repair()
+                progress.update(task, completed=True)
+            console.print("[green]Mesh repaired![/green]")
+
+    # Strategy selection
+    console.print("\n[cyan]Step 2: Select machining strategy[/cyan]")
+    strategy = questionary.select(
+        "Choose a strategy:",
+        choices=[
+            questionary.Choice("Iso-Scallop (Adaptive stepover for best finish)", value="iso-scallop"),
+            questionary.Choice("Spiral (Continuous path, minimal retracts)", value="spiral"),
+            questionary.Choice("Parallel Lines (Simple raster)", value="parallel"),
+            questionary.Choice("Waterline (Constant Z for steep walls)", value="waterline"),
+            questionary.Choice("Trochoidal (For slots and pockets)", value="trochoidal"),
+        ]
+    ).ask()
+
+    if not strategy:
+        console.print("[yellow]Cancelled.[/yellow]")
+        return
+
+    # Tool selection
+    console.print("\n[cyan]Step 3: Configure tool[/cyan]")
+    tool_type = questionary.select(
+        "Tool type:",
+        choices=[
+            questionary.Choice("Ball End Mill (Best for 3D surfaces)", value="ball"),
+            questionary.Choice("Flat End Mill (For pockets and floors)", value="flat"),
+            questionary.Choice("Bull Nose (Compromise between ball and flat)", value="bull"),
+        ]
+    ).ask()
+
+    tool_diameter = questionary.text(
+        "Tool diameter (mm):",
+        default="6.0",
+        validate=lambda x: x.replace(".", "").isdigit()
+    ).ask()
+    tool_diameter = float(tool_diameter)
+
+    # Machining parameters
+    console.print("\n[cyan]Step 4: Machining parameters[/cyan]")
+
+    stepover_pct = questionary.text(
+        "Stepover (% of tool diameter):",
+        default="15",
+        validate=lambda x: x.isdigit() and 1 <= int(x) <= 50
+    ).ask()
+    stepover = float(stepover_pct) / 100
+
+    feed_rate = questionary.text(
+        "Feed rate (mm/min):",
+        default="1000",
+        validate=lambda x: x.isdigit()
+    ).ask()
+    feed_rate = float(feed_rate)
+
+    spindle_rpm = questionary.text(
+        "Spindle speed (RPM):",
+        default="12000",
+        validate=lambda x: x.isdigit()
+    ).ask()
+    spindle_rpm = int(spindle_rpm)
+
+    # Output file
+    console.print("\n[cyan]Step 5: Output[/cyan]")
+    default_output = str(input_path.with_suffix(f".{strategy}.nc"))
+    output_file = questionary.text(
+        "Output G-code file:",
+        default=default_output
+    ).ask()
+
+    # Summary
+    console.print("\n")
+    summary = Table(title="Configuration Summary", show_header=False)
+    summary.add_column("Setting", style="cyan")
+    summary.add_column("Value", style="green")
+    summary.add_row("Strategy", strategy.replace("-", " ").title())
+    summary.add_row("Tool", f"{tool_type.title()} {tool_diameter}mm")
+    summary.add_row("Stepover", f"{stepover_pct}%")
+    summary.add_row("Feed Rate", f"{feed_rate} mm/min")
+    summary.add_row("Spindle", f"{spindle_rpm} RPM")
+    summary.add_row("Output", output_file)
+    console.print(summary)
+
+    proceed = questionary.confirm("Generate toolpath?", default=True).ask()
+    if not proceed:
+        console.print("[yellow]Cancelled.[/yellow]")
+        return
+
+    # Generate toolpath
+    console.print("\n[cyan]Generating toolpath...[/cyan]")
+
+    with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console) as progress:
+        task = progress.add_task("Initializing...", total=None)
+
+        # Create tool
+        if tool_type == "ball":
+            tool = Tool.ball(diameter=tool_diameter)
+        elif tool_type == "flat":
+            tool = Tool.flat(diameter=tool_diameter)
+        else:
+            tool = Tool.bull(diameter=tool_diameter, corner_radius=tool_diameter * 0.1)
+
+        progress.update(task, description="Loading pipeline...")
+        pipeline = CAMPipeline()
+        pipeline.load_mesh(input_path)
+        pipeline.prepare_mesh(repair=True, center=True, place_on_bed=True)
+
+        progress.update(task, description="Creating job...")
+        job = CAMJob(
+            finishing_tool=tool,
+            finishing_stepover=stepover,
+            feed_rate=feed_rate,
+            spindle_rpm=spindle_rpm,
+            safe_z=10.0,
+        )
+
+        progress.update(task, description="Generating toolpath...")
+        result = pipeline.run(job)
+
+        progress.update(task, description="Saving G-code...")
+        result.gcode.save(output_file)
+        progress.update(task, completed=True, description="Complete!")
+
+    # Results
+    console.print("\n")
+    result_table = Table(title="Results")
+    result_table.add_column("Metric", style="cyan")
+    result_table.add_column("Value", style="green")
+
+    if result.finishing_toolpath:
+        result_table.add_row("Toolpath Points", f"{len(result.finishing_toolpath):,}")
+        result_table.add_row("Toolpath Length", f"{result.finishing_toolpath.get_total_length():.1f} mm")
+        time_min = result.finishing_toolpath.get_total_length() / feed_rate
+        result_table.add_row("Estimated Time", f"{time_min:.1f} min")
+
+    result_table.add_row("G-code Lines", f"{len(result.gcode):,}")
+    console.print(result_table)
+
+    console.print(f"\n[bold green]G-code saved to: {output_file}[/bold green]")
+
+    # Offer to visualize
+    visualize = questionary.confirm("Open in web viewer?", default=False).ask()
+    if visualize:
+        console.print("[cyan]Starting web server...[/cyan]")
+        from pycam3d.web import run_server
+        run_server()
+
+
+@main.command()
+@click.option("--host", "-h", default="127.0.0.1", help="Host to bind to")
+@click.option("--port", "-p", default=8000, type=int, help="Port to bind to")
+@click.pass_context
+def serve(ctx: click.Context, host: str, port: int) -> None:
+    """
+    Start the web interface with 3D visualization.
+
+    Opens a browser-based interface for uploading models,
+    configuring toolpaths, and visualizing results in 3D.
+    """
+    from pycam3d.web import run_server
+
+    console.print(Panel.fit(
+        "[bold blue]PyCAM3D Web Interface[/bold blue]\n"
+        f"Starting server at [cyan]http://{host}:{port}[/cyan]\n\n"
+        "[dim]Press Ctrl+C to stop[/dim]",
+        border_style="blue"
+    ))
+
+    run_server(host=host, port=port)
+
+
+@main.command()
+@click.argument("input_file", type=click.Path(exists=True))
+@click.pass_context
 def curvature(ctx: click.Context, input_file: str) -> None:
     """
     Analyze surface curvature of a mesh.
