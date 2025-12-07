@@ -342,7 +342,13 @@ HTML_TEMPLATE = """
             camera = new THREE.PerspectiveCamera(45, viewer.clientWidth / viewer.clientHeight, 0.1, 10000);
             camera.position.set(100, 100, 100);
 
-            renderer = new THREE.WebGLRenderer({ antialias: true });
+            try {
+                renderer = new THREE.WebGLRenderer({ antialias: true });
+            } catch (e) {
+                viewer.innerHTML = '<div style="color: #ff6b6b; padding: 20px; text-align: center;">WebGL not available. Please use a modern browser with WebGL support.</div>';
+                console.error('WebGL initialization failed:', e);
+                return;
+            }
             renderer.setSize(viewer.clientWidth, viewer.clientHeight);
             renderer.setPixelRatio(window.devicePixelRatio);
             viewer.appendChild(renderer.domElement);
@@ -427,13 +433,23 @@ HTML_TEMPLATE = """
                 }
 
                 currentMeshId = data.mesh_id;
-                displayMesh(data);
-                showStatus('Mesh loaded successfully!');
-
-                document.getElementById('mesh-info').classList.remove('hidden');
-                document.getElementById('toolpath-section').classList.remove('hidden');
+                
+                console.log('Upload response:', data);
+                console.log('Vertices count:', data.vertices ? data.vertices.length : 'undefined');
+                console.log('Faces count:', data.faces ? data.faces.length : 'undefined');
+                
+                try {
+                    displayMesh(data);
+                    showStatus('Mesh loaded successfully!');
+                    document.getElementById('mesh-info').classList.remove('hidden');
+                    document.getElementById('toolpath-section').classList.remove('hidden');
+                } catch (displayErr) {
+                    console.error('Display error:', displayErr);
+                    showStatus('Error displaying mesh: ' + displayErr.message, 5000);
+                }
 
             } catch (err) {
+                console.error('Upload error:', err);
                 showStatus('Upload failed: ' + err.message);
             }
         }
