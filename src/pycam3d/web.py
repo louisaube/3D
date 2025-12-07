@@ -312,12 +312,21 @@ HTML_TEMPLATE = """
     <div id="status"></div>
     <div id="controls-hint">🖱 Rotate | Scroll: Zoom | Shift+Drag: Pan</div>
 
-    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/controls/OrbitControls.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/loaders/STLLoader.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/loaders/OBJLoader.js"></script>
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+        }
+    }
+    </script>
 
-    <script>
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { STLLoader } from 'three/addons/loaders/STLLoader.js';
+        import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
+
         // Three.js setup
         let scene, camera, renderer, controls;
         let meshObject, toolpathLine, toolMarker;
@@ -338,7 +347,7 @@ HTML_TEMPLATE = """
             renderer.setPixelRatio(window.devicePixelRatio);
             viewer.appendChild(renderer.domElement);
 
-            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls = new OrbitControls(camera, renderer.domElement);
             controls.enableDamping = true;
             controls.dampingFactor = 0.05;
 
@@ -675,8 +684,18 @@ def create_app():
         raise ImportError("FastAPI required: pip install fastapi uvicorn python-multipart")
 
     import trimesh
+    from fastapi.middleware.cors import CORSMiddleware
 
     app = FastAPI(title="PyCAM3D", description="3D CAM Toolpath Generator")
+
+    # Add CORS middleware for Replit proxy/iframe support
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     # Store uploaded meshes temporarily
     mesh_store: Dict[str, Any] = {}
