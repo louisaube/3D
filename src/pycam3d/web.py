@@ -488,7 +488,7 @@ HTML_TEMPLATE = """
             meshObject = new THREE.Mesh(geometry, material);
             scene.add(meshObject);
 
-            // Center camera
+            // Center camera on mesh
             geometry.computeBoundingBox();
             const box = geometry.boundingBox;
             const center = new THREE.Vector3();
@@ -496,8 +496,23 @@ HTML_TEMPLATE = """
             const size = box.getSize(new THREE.Vector3());
             const maxDim = Math.max(size.x, size.y, size.z);
 
-            camera.position.set(center.x + maxDim, center.y + maxDim, center.z + maxDim);
+            console.log('Mesh bounds:', box.min, box.max);
+            console.log('Mesh center:', center);
+            console.log('Mesh size:', size, 'maxDim:', maxDim);
+
+            // Adjust camera clipping planes based on mesh size
+            const distance = maxDim * 2;
+            camera.near = maxDim * 0.001;  // 0.1% of mesh size
+            camera.far = maxDim * 100;     // 100x mesh size
+            camera.updateProjectionMatrix();
+
+            // Position camera to see the whole mesh
+            camera.position.set(center.x + distance, center.y + distance, center.z + distance);
+            camera.lookAt(center);
+
+            // Update orbit controls target and sync
             controls.target.copy(center);
+            controls.update();
 
             // Update stats
             document.getElementById('stat-vertices').textContent = data.stats.vertex_count.toLocaleString();
