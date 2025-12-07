@@ -455,8 +455,20 @@ HTML_TEMPLATE = """
         }
 
         function displayMesh(data) {
+            // Check if renderer is available
+            if (!renderer) {
+                throw new Error('3D viewer not initialized. WebGL may not be supported.');
+            }
+            
             // Remove existing mesh
             if (meshObject) scene.remove(meshObject);
+
+            // Validate data
+            if (!data.vertices || !data.faces) {
+                throw new Error('Invalid mesh data received from server');
+            }
+            
+            console.log('Creating mesh with', data.vertices.length, 'vertices and', data.faces.length, 'faces');
 
             // Create geometry from vertices and faces
             const geometry = new THREE.BufferGeometry();

@@ -1,0 +1,79 @@
+he source list for the Content Security Policy directive 'default-src' contains an invalid source: ''unsafe-dynamic''. It will be ignored.Comprendre cette erreur
+13The Content-Security-Policy directive 'default-src' contains 'report-uri' as a source expression. Did you want to add it as a directive and forget a semicolon?Comprendre cette erreur
+13The source list for Content Security Policy directive 'default-src' contains a source with an invalid path: '/api/4509669501698048/security/?sentry_key=7eb3d90eb4660416caf507087367e67e'. The query component, including the '?', will be ignored.Comprendre cette erreur
+stallwart.build.js:1 stallwart: failed ping 1
+stallwart.build.js:1 stallwart: failed ping 2
+3D:1 The source list for the Content Security Policy directive 'default-src' contains an invalid source: ''unsafe-dynamic''. It will be ignored.Comprendre cette erreur
+3D:1 The Content-Security-Policy directive 'default-src' contains 'report-uri' as a source expression. Did you want to add it as a directive and forget a semicolon?Comprendre cette erreur
+3D:1 The source list for Content Security Policy directive 'default-src' contains a source with an invalid path: '/api/4509669501698048/security/?sentry_key=7eb3d90eb4660416caf507087367e67e'. The query component, including the '?', will be ignored.Comprendre cette erreur
+181a81e7bdf2fe17.js:2 [Coframe] Replit Enterprise watcher loaded
+181a81e7bdf2fe17.js:2 
+      /////////////////////
+   ///////////////////////////
+  ////////@@@@@@@//////////////
+  ////////@@@@@@@//////////////
+  ////////@@@@@@@//////////////        Curious and driven?
+  ///////////////@@@@@@@///////        Work with us!
+  ///////////////@@@@@@@///////
+  ///////////////@@@@@@@///////        https://join.replit.com/hack.with.us
+  ////////@@@@@@@//////////////
+  ////////@@@@@@@//////////////
+  ////////@@@@@@#//////////////
+   ///////////////////////////
+      /////////////////////
+      
+181a81e7bdf2fe17.js:2 Download the Apollo DevTools for a better development experience: https://chrome.google.com/webstore/detail/apollo-client-developer-t/jdkknkkbebbapilgoeccciglkfbmbnfm
+181a81e7bdf2fe17.js:2 [LaunchDarkly] LaunchDarkly client initialized
+181a81e7bdf2fe17.js:2 Adding extension: Google Cloud Auth Object
+5Error while parsing the 'sandbox' attribute: 'allow-downloads-without-user-activation' is an invalid sandbox flag.Comprendre cette erreur
+ed1e693c96a75807.js:2 Unrecognized feature: 'ambient-light-sensor'.
+z @ ed1e693c96a75807.js:2Comprendre cet avertissement
+ed1e693c96a75807.js:2 Unrecognized feature: 'battery'.
+z @ ed1e693c96a75807.js:2Comprendre cet avertissement
+ed1e693c96a75807.js:2 Unrecognized feature: 'execution-while-not-rendered'.
+z @ ed1e693c96a75807.js:2Comprendre cet avertissement
+ed1e693c96a75807.js:2 Unrecognized feature: 'execution-while-out-of-viewport'.
+z @ ed1e693c96a75807.js:2Comprendre cet avertissement
+ed1e693c96a75807.js:2 Unrecognized feature: 'layout-animations'.
+z @ ed1e693c96a75807.js:2Comprendre cet avertissement
+ed1e693c96a75807.js:2 Unrecognized feature: 'legacy-image-formats'.
+z @ ed1e693c96a75807.js:2Comprendre cet avertissement
+ed1e693c96a75807.js:2 Unrecognized feature: 'navigation-override'.
+z @ ed1e693c96a75807.js:2Comprendre cet avertissement
+ed1e693c96a75807.js:2 Unrecognized feature: 'oversized-images'.
+z @ ed1e693c96a75807.js:2Comprendre cet avertissement
+ed1e693c96a75807.js:2 Unrecognized feature: 'publickey-credentials'.
+z @ ed1e693c96a75807.js:2Comprendre cet avertissement
+ed1e693c96a75807.js:2 Unrecognized feature: 'speaker-selection'.
+z @ ed1e693c96a75807.js:2Comprendre cet avertissement
+ed1e693c96a75807.js:2 Unrecognized feature: 'unoptimized-images'.
+z @ ed1e693c96a75807.js:2Comprendre cet avertissement
+ed1e693c96a75807.js:2 Unrecognized feature: 'unsized-media'.
+z @ ed1e693c96a75807.js:2Comprendre cet avertissement
+ed1e693c96a75807.js:2 Unrecognized feature: 'pointer-lock'.
+z @ ed1e693c96a75807.js:2Comprendre cet avertissement
+ed1e693c96a75807.js:2 Allow attribute will take precedence over 'allowfullscreen'.
+z @ ed1e693c96a75807.js:2Comprendre cet avertissement
+ed1e693c96a75807.js:2 Allow attribute will take precedence over 'allowpaymentrequest'.
+z @ ed1e693c96a75807.js:2Comprendre cet avertissement
+background.js:57 Uncaught (in promise) TypeError: Cannot read properties of undefined (reading 'onStateChanged')
+    at fc031332bf9ab8cf.js:2:111484
+    at Array.reduce (<anonymous>)
+    at r (fc031332bf9ab8cf.js:2:111455)
+    at o (181a81e7bdf2fe17.js:2:98690)Comprendre cette erreur
+workspace_iframe.html?initialPath=%2F&id=%3Ar1p%3A:32 Unrecognized feature: 'ambient-light-sensor'.Comprendre cet avertissement
+workspace_iframe.html?initialPath=%2F&id=%3Ar1p%3A:32 Unrecognized feature: 'battery'.Comprendre cet avertissement
+workspace_iframe.html?initialPath=%2F&id=%3Ar1p%3A:32 Unrecognized feature: 'execution-while-not-rendered'.Comprendre cet avertissement
+workspace_iframe.html?initialPath=%2F&id=%3Ar1p%3A:32 Unrecognized feature: 'execution-while-out-of-viewport'.Comprendre cet avertissement
+workspace_iframe.html?initialPath=%2F&id=%3Ar1p%3A:32 Unrecognized feature: 'layout-animations'.Comprendre cet avertissement
+workspace_iframe.html?initialPath=%2F&id=%3Ar1p%3A:32 Unrecognized feature: 'legacy-image-formats'.Comprendre cet avertissement
+workspace_iframe.html?initialPath=%2F&id=%3Ar1p%3A:32 Unrecognized feature: 'navigation-override'.Comprendre cet avertissement
+workspace_iframe.html?initialPath=%2F&id=%3Ar1p%3A:32 Unrecognized feature: 'oversized-images'.Comprendre cet avertissement
+workspace_iframe.html?initialPath=%2F&id=%3Ar1p%3A:32 Unrecognized feature: 'publickey-credentials'.Comprendre cet avertissement
+workspace_iframe.html?initialPath=%2F&id=%3Ar1p%3A:32 Unrecognized feature: 'speaker-selection'.Comprendre cet avertissement
+workspace_iframe.html?initialPath=%2F&id=%3Ar1p%3A:32 Unrecognized feature: 'unoptimized-images'.Comprendre cet avertissement
+workspace_iframe.html?initialPath=%2F&id=%3Ar1p%3A:32 Unrecognized feature: 'unsized-media'.Comprendre cet avertissement
+workspace_iframe.html?initialPath=%2F&id=%3Ar1p%3A:32 Allow attribute will take precedence over 'allowfullscreen'.Comprendre cet avertissement
+workspace_iframe.html?initialPath=%2F&id=%3Ar1p%3A:32 Allow attribute will take precedence over 'allowpaymentrequest'.Comprendre cet avertissement
+stallwart.build.js:1 stallwart: failed ping 1
+stallwart.build.js:1 stallwart: failed ping 2
