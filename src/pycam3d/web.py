@@ -587,20 +587,31 @@ HTML_TEMPLATE = """
         }
 
         function displayMesh(data) {
-            // Check if renderer is available
-            if (!renderer) {
-                throw new Error('3D viewer not initialized. WebGL may not be supported.');
-            }
-            
-            // Remove existing mesh
-            if (meshObject) scene.remove(meshObject);
-
             // Validate data
             if (!data.vertices || !data.faces) {
                 throw new Error('Invalid mesh data received from server');
             }
             
             console.log('Creating mesh with', data.vertices.length, 'vertices and', data.faces.length, 'faces');
+            
+            // If WebGL is not available, just update stats and return
+            if (!renderer || !scene) {
+                console.warn('WebGL not available - displaying stats only');
+                const bounds_min = data.stats.bounds_min;
+                const bounds_max = data.stats.bounds_max;
+                const sizeX = bounds_max[0] - bounds_min[0];
+                const sizeY = bounds_max[1] - bounds_min[1];
+                const sizeZ = bounds_max[2] - bounds_min[2];
+                
+                document.getElementById('stat-vertices').textContent = data.stats.vertex_count.toLocaleString();
+                document.getElementById('stat-faces').textContent = data.stats.face_count.toLocaleString();
+                document.getElementById('stat-size').textContent = `${sizeX.toFixed(1)}×${sizeY.toFixed(1)}×${sizeZ.toFixed(1)}`;
+                document.getElementById('stat-watertight').textContent = data.stats.is_watertight ? '✓' : '✗';
+                return;
+            }
+            
+            // Remove existing mesh
+            if (meshObject) scene.remove(meshObject);
 
             // Create geometry from vertices and faces
             const geometry = new THREE.BufferGeometry();
