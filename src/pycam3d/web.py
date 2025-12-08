@@ -131,6 +131,45 @@ HTML_TEMPLATE = """
             background: linear-gradient(135deg, #00ff88 0%, #00cc6a 100%);
             color: #000;
         }
+        .btn-small {
+            width: auto;
+            padding: 8px 12px;
+            font-size: 0.85rem;
+            margin: 0;
+        }
+        .btn-group {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        .btn-icon {
+            width: 36px;
+            height: 36px;
+            padding: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.1rem;
+        }
+        .scale-input-group {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+        .scale-input-group input[type="number"] {
+            width: 80px;
+            text-align: center;
+        }
+        .scale-presets {
+            display: flex;
+            gap: 6px;
+            margin-top: 8px;
+            flex-wrap: wrap;
+        }
+        .scale-presets button {
+            flex: 1;
+            min-width: 60px;
+        }
         .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
         .stat-item {
             background: rgba(0,212,255,0.1);
@@ -232,51 +271,112 @@ HTML_TEMPLATE = """
                 </div>
             </div>
 
+            <div id="view-controls" class="card hidden">
+                <h2>View & Transform</h2>
+
+                <div class="form-group">
+                    <label>Camera Views</label>
+                    <div class="btn-group">
+                        <button class="btn-secondary btn-small" onclick="resetView()">Reset</button>
+                        <button class="btn-secondary btn-small" onclick="setView('top')">Top</button>
+                        <button class="btn-secondary btn-small" onclick="setView('front')">Front</button>
+                        <button class="btn-secondary btn-small" onclick="setView('side')">Side</button>
+                        <button class="btn-secondary btn-small" onclick="setView('iso')">Iso</button>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>Scale Factor</label>
+                    <div class="scale-input-group">
+                        <input type="number" id="scale-factor" value="1.0" min="0.001" max="1000" step="0.1">
+                        <button class="btn-secondary btn-small" onclick="applyScale()">Apply</button>
+                    </div>
+                    <div class="scale-presets">
+                        <button class="btn-secondary btn-small" onclick="setScale(0.1)">0.1x</button>
+                        <button class="btn-secondary btn-small" onclick="setScale(0.5)">0.5x</button>
+                        <button class="btn-secondary btn-small" onclick="setScale(2)">2x</button>
+                        <button class="btn-secondary btn-small" onclick="setScale(10)">10x</button>
+                        <button class="btn-secondary btn-small" onclick="setScale(25.4)">in→mm</button>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>Target Size (mm)</label>
+                    <div class="scale-input-group">
+                        <input type="number" id="target-size" placeholder="e.g. 100" min="0.1" step="1">
+                        <select id="target-axis">
+                            <option value="max">Max</option>
+                            <option value="x">X</option>
+                            <option value="y">Y</option>
+                            <option value="z">Z</option>
+                        </select>
+                        <button class="btn-secondary btn-small" onclick="scaleToSize()">Fit</button>
+                    </div>
+                </div>
+            </div>
+
             <div id="toolpath-section" class="card hidden">
                 <h2>Toolpath Settings</h2>
 
-                <div class="form-group">
-                    <label>Strategy</label>
-                    <select id="strategy">
-                        <option value="iso-scallop">Iso-Scallop (Adaptive)</option>
-                        <option value="spiral">Spiral (Continuous)</option>
-                        <option value="parallel">Parallel Lines</option>
-                        <option value="waterline">Waterline</option>
-                    </select>
-                </div>
-
-                <div class="form-group">
-                    <label>Tool Type</label>
-                    <select id="tool-type">
-                        <option value="ball">Ball End Mill</option>
-                        <option value="flat">Flat End Mill</option>
-                        <option value="bull">Bull Nose</option>
-                    </select>
-                </div>
-
-                <div class="form-group">
-                    <label>Tool Diameter <span class="range-value" id="tool-dia-val">6</span> mm</label>
-                    <input type="range" id="tool-diameter" min="1" max="25" value="6" step="0.5">
-                </div>
-
-                <div class="form-group">
-                    <label>Stepover <span class="range-value" id="stepover-val">15</span>%</label>
-                    <input type="range" id="stepover" min="5" max="50" value="15">
-                </div>
-
-                <div class="form-group">
-                    <label>Feed Rate <span class="range-value" id="feed-val">1000</span> mm/min</label>
-                    <input type="range" id="feed-rate" min="100" max="5000" value="1000" step="100">
-                </div>
-
-                <div class="form-group">
-                    <label>Spindle Speed <span class="range-value" id="spindle-val">12000</span> RPM</label>
-                    <input type="range" id="spindle-rpm" min="1000" max="24000" value="12000" step="1000">
-                </div>
-
-                <button class="btn-primary" id="generate-btn">
-                    Generate Toolpath
+                <button class="btn-success" id="smart-btn" style="margin-bottom: 15px;">
+                    Smart Strategy (Auto-Optimize)
                 </button>
+
+                <div id="smart-plan" class="hidden" style="margin-bottom: 15px;">
+                    <div style="background: rgba(0,255,136,0.1); border-radius: 8px; padding: 12px; margin-bottom: 10px;">
+                        <h3 style="margin: 0 0 10px 0; color: #00ff88; font-size: 0.95rem;">Recommended Plan</h3>
+                        <div id="smart-plan-content"></div>
+                    </div>
+                    <div class="btn-group">
+                        <button class="btn-primary btn-small" id="apply-smart-btn">Apply & Generate All</button>
+                        <button class="btn-secondary btn-small" id="cancel-smart-btn">Manual Mode</button>
+                    </div>
+                </div>
+
+                <div id="manual-settings">
+                    <div class="form-group">
+                        <label>Strategy</label>
+                        <select id="strategy">
+                            <option value="iso-scallop">Iso-Scallop (Adaptive)</option>
+                            <option value="spiral">Spiral (Continuous)</option>
+                            <option value="parallel">Parallel Lines</option>
+                            <option value="waterline">Waterline</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Tool Type</label>
+                        <select id="tool-type">
+                            <option value="ball">Ball End Mill</option>
+                            <option value="flat">Flat End Mill</option>
+                            <option value="bull">Bull Nose</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Tool Diameter <span class="range-value" id="tool-dia-val">6</span> mm</label>
+                        <input type="range" id="tool-diameter" min="1" max="25" value="6" step="0.5">
+                    </div>
+
+                    <div class="form-group">
+                        <label>Stepover <span class="range-value" id="stepover-val">15</span>%</label>
+                        <input type="range" id="stepover" min="5" max="50" value="15">
+                    </div>
+
+                    <div class="form-group">
+                        <label>Feed Rate <span class="range-value" id="feed-val">1000</span> mm/min</label>
+                        <input type="range" id="feed-rate" min="100" max="5000" value="1000" step="100">
+                    </div>
+
+                    <div class="form-group">
+                        <label>Spindle Speed <span class="range-value" id="spindle-val">12000</span> RPM</label>
+                        <input type="range" id="spindle-rpm" min="1000" max="24000" value="12000" step="1000">
+                    </div>
+
+                    <button class="btn-primary" id="generate-btn">
+                        Generate Toolpath
+                    </button>
+                </div>
             </div>
 
             <div id="result-section" class="card hidden">
@@ -333,6 +433,13 @@ HTML_TEMPLATE = """
         let currentMeshId = null;
         let gcodeData = null;
         let animationId = null;
+
+        // Store initial mesh data for reset and scaling
+        let meshData = null;
+        let meshCenter = new THREE.Vector3();
+        let meshSize = new THREE.Vector3();
+        let initialCameraPos = new THREE.Vector3();
+        let initialControlsTarget = new THREE.Vector3();
 
         function init() {
             scene = new THREE.Scene();
@@ -394,11 +501,20 @@ HTML_TEMPLATE = """
             renderer.render(scene, camera);
         }
 
+        let statusTimeout = null;
         function showStatus(msg, duration = 3000) {
             const status = document.getElementById('status');
             status.innerHTML = msg;
             status.classList.add('show');
-            setTimeout(() => status.classList.remove('show'), duration);
+            if (statusTimeout) clearTimeout(statusTimeout);
+            if (duration > 0) {
+                statusTimeout = setTimeout(() => status.classList.remove('show'), duration);
+            }
+        }
+        function hideStatus() {
+            const status = document.getElementById('status');
+            status.classList.remove('show');
+            if (statusTimeout) clearTimeout(statusTimeout);
         }
 
         // File upload
@@ -418,31 +534,47 @@ HTML_TEMPLATE = """
         });
 
         async function uploadFile(file) {
-            showStatus('<span class="loading"></span>Uploading mesh...');
+            console.log('Starting upload for file:', file.name, 'size:', file.size, 'bytes');
+            showStatus('<span class="loading"></span>Uploading mesh...', 0); // Keep visible
 
             const formData = new FormData();
             formData.append('file', file);
 
             try {
+                console.log('Sending fetch request to /api/upload...');
                 const response = await fetch('/api/upload', { method: 'POST', body: formData });
+                console.log('Response received, status:', response.status);
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    console.error('Server error:', response.status, errorText);
+                    showStatus('Server error: ' + response.status + ' - ' + errorText, 5000);
+                    return;
+                }
+
+                console.log('Parsing JSON response...');
                 const data = await response.json();
+                console.log('Upload response:', data);
 
                 if (data.error) {
-                    showStatus('Error: ' + data.error);
+                    console.error('API error:', data.error);
+                    showStatus('Error: ' + data.error, 5000);
                     return;
                 }
 
                 currentMeshId = data.mesh_id;
-                
-                console.log('Upload response:', data);
+                console.log('Mesh ID:', currentMeshId);
                 console.log('Vertices count:', data.vertices ? data.vertices.length : 'undefined');
                 console.log('Faces count:', data.faces ? data.faces.length : 'undefined');
-                
+
                 try {
+                    console.log('Calling displayMesh...');
                     displayMesh(data);
                     showStatus('Mesh loaded successfully!');
                     document.getElementById('mesh-info').classList.remove('hidden');
+                    document.getElementById('view-controls').classList.remove('hidden');
                     document.getElementById('toolpath-section').classList.remove('hidden');
+                    console.log('Display complete');
                 } catch (displayErr) {
                     console.error('Display error:', displayErr);
                     showStatus('Error displaying mesh: ' + displayErr.message, 5000);
@@ -450,7 +582,7 @@ HTML_TEMPLATE = """
 
             } catch (err) {
                 console.error('Upload error:', err);
-                showStatus('Upload failed: ' + err.message);
+                showStatus('Upload failed: ' + err.message, 5000);
             }
         }
 
@@ -500,6 +632,11 @@ HTML_TEMPLATE = """
             console.log('Mesh center:', center);
             console.log('Mesh size:', size, 'maxDim:', maxDim);
 
+            // Store mesh data for reset and scaling
+            meshData = data;
+            meshCenter.copy(center);
+            meshSize.copy(size);
+
             // Adjust camera clipping planes based on mesh size
             const distance = maxDim * 2;
             camera.near = maxDim * 0.001;  // 0.1% of mesh size
@@ -514,12 +651,242 @@ HTML_TEMPLATE = """
             controls.target.copy(center);
             controls.update();
 
+            // Store initial camera position for reset
+            initialCameraPos.copy(camera.position);
+            initialControlsTarget.copy(controls.target);
+
             // Update stats
             document.getElementById('stat-vertices').textContent = data.stats.vertex_count.toLocaleString();
             document.getElementById('stat-faces').textContent = data.stats.face_count.toLocaleString();
             document.getElementById('stat-size').textContent = `${size.x.toFixed(1)}x${size.y.toFixed(1)}x${size.z.toFixed(1)}`;
             document.getElementById('stat-watertight').textContent = data.stats.is_watertight ? '✓' : '✗';
         }
+
+        // View control functions
+        function resetView() {
+            if (!meshObject) return;
+            camera.position.copy(initialCameraPos);
+            controls.target.copy(initialControlsTarget);
+            controls.update();
+            console.log('View reset to initial position');
+        }
+
+        function setView(type) {
+            if (!meshObject) return;
+            const maxDim = Math.max(meshSize.x, meshSize.y, meshSize.z);
+            const distance = maxDim * 2.5;
+
+            switch(type) {
+                case 'top':
+                    camera.position.set(meshCenter.x, meshCenter.y + distance, meshCenter.z);
+                    break;
+                case 'front':
+                    camera.position.set(meshCenter.x, meshCenter.y, meshCenter.z + distance);
+                    break;
+                case 'side':
+                    camera.position.set(meshCenter.x + distance, meshCenter.y, meshCenter.z);
+                    break;
+                case 'iso':
+                default:
+                    camera.position.set(
+                        meshCenter.x + distance * 0.7,
+                        meshCenter.y + distance * 0.7,
+                        meshCenter.z + distance * 0.7
+                    );
+                    break;
+            }
+            camera.lookAt(meshCenter);
+            controls.target.copy(meshCenter);
+            controls.update();
+            console.log('View set to:', type);
+        }
+
+        // Scale functions
+        function setScale(factor) {
+            document.getElementById('scale-factor').value = factor;
+        }
+
+        async function applyScale() {
+            const factor = parseFloat(document.getElementById('scale-factor').value);
+            if (!factor || factor <= 0 || !currentMeshId) {
+                showStatus('Invalid scale factor', 3000);
+                return;
+            }
+            await scaleMesh(factor);
+        }
+
+        async function scaleToSize() {
+            const targetSize = parseFloat(document.getElementById('target-size').value);
+            const axis = document.getElementById('target-axis').value;
+            if (!targetSize || targetSize <= 0 || !currentMeshId) {
+                showStatus('Enter a valid target size', 3000);
+                return;
+            }
+
+            let currentSize;
+            switch(axis) {
+                case 'x': currentSize = meshSize.x; break;
+                case 'y': currentSize = meshSize.y; break;
+                case 'z': currentSize = meshSize.z; break;
+                default: currentSize = Math.max(meshSize.x, meshSize.y, meshSize.z);
+            }
+
+            const factor = targetSize / currentSize;
+            document.getElementById('scale-factor').value = factor.toFixed(4);
+            await scaleMesh(factor);
+        }
+
+        async function scaleMesh(factor) {
+            showStatus('<span class="loading"></span>Scaling mesh...', 0);
+            try {
+                const response = await fetch('/api/scale', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ mesh_id: currentMeshId, factor: factor })
+                });
+                const data = await response.json();
+                if (data.error) {
+                    showStatus('Error: ' + data.error, 5000);
+                    return;
+                }
+                // Update mesh display with new data
+                displayMesh(data);
+                showStatus(`Mesh scaled by ${factor.toFixed(3)}x`, 3000);
+                // Update stats
+                document.getElementById('stat-size').textContent =
+                    `${meshSize.x.toFixed(1)}x${meshSize.y.toFixed(1)}x${meshSize.z.toFixed(1)}`;
+            } catch (err) {
+                console.error('Scale error:', err);
+                showStatus('Scale failed: ' + err.message, 5000);
+            }
+        }
+
+        // Smart Strategy functions
+        let smartPlanData = null;
+
+        document.getElementById('smart-btn').addEventListener('click', async () => {
+            if (!currentMeshId) return;
+
+            showStatus('<span class="loading"></span>Analyzing mesh geometry...', 0);
+            document.getElementById('smart-btn').disabled = true;
+
+            try {
+                const response = await fetch('/api/analyze', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ mesh_id: currentMeshId })
+                });
+                const data = await response.json();
+
+                if (data.error) {
+                    showStatus('Analysis error: ' + data.error, 5000);
+                    return;
+                }
+
+                smartPlanData = data;
+                displaySmartPlan(data);
+                showStatus('Analysis complete! Review the recommended plan.', 3000);
+
+            } catch (err) {
+                console.error('Analysis error:', err);
+                showStatus('Analysis failed: ' + err.message, 5000);
+            } finally {
+                document.getElementById('smart-btn').disabled = false;
+            }
+        });
+
+        function displaySmartPlan(plan) {
+            const container = document.getElementById('smart-plan-content');
+
+            // Region analysis summary
+            let html = '<div style="font-size: 0.8rem; color: #888; margin-bottom: 10px;">';
+            html += `<div>Surface: ${plan.region_analysis.flat_percent?.toFixed(0) || 0}% flat, `;
+            html += `${(plan.region_analysis.gentle_curve_percent + plan.region_analysis.moderate_curve_percent)?.toFixed(0) || 0}% curved, `;
+            html += `${plan.region_analysis.sharp_feature_percent?.toFixed(0) || 0}% detail</div>`;
+            html += '</div>';
+
+            // Operations
+            html += '<div style="display: flex; flex-direction: column; gap: 8px;">';
+
+            const phaseColors = {
+                'roughing': '#ff6b6b',
+                'semi_finish': '#ffd93d',
+                'finish': '#6bcf6b',
+                'detail': '#6b9fff'
+            };
+
+            const phaseLabels = {
+                'roughing': 'ROUGHING',
+                'semi_finish': 'SEMI-FINISH',
+                'finish': 'FINISH',
+                'detail': 'DETAIL'
+            };
+
+            plan.operations.forEach((op, idx) => {
+                const color = phaseColors[op.phase] || '#888';
+                html += `<div style="background: rgba(255,255,255,0.05); padding: 8px; border-radius: 6px; border-left: 3px solid ${color};">`;
+                html += `<div style="display: flex; justify-content: space-between; align-items: center;">`;
+                html += `<span style="font-weight: 600; color: ${color}; font-size: 0.75rem;">${phaseLabels[op.phase]}</span>`;
+                html += `<span style="font-size: 0.7rem; color: #666;">${op.estimated_time_percent}% time</span>`;
+                html += `</div>`;
+                html += `<div style="font-size: 0.85rem; margin-top: 4px;">`;
+                html += `<strong>${op.tool.name}</strong> - ${op.strategy} @ ${op.stepover_percent}%`;
+                html += `</div>`;
+                html += `</div>`;
+            });
+
+            html += '</div>';
+
+            // Summary
+            html += `<div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.1); font-size: 0.8rem;">`;
+            html += `<div style="color: #00ff88;">Est. time reduction: ${plan.estimated_time_reduction}</div>`;
+            html += `<div style="color: #00d4ff;">Quality improvement: ${plan.quality_improvement}</div>`;
+            html += `</div>`;
+
+            container.innerHTML = html;
+
+            // Show plan, hide manual settings
+            document.getElementById('smart-plan').classList.remove('hidden');
+            document.getElementById('manual-settings').style.opacity = '0.5';
+            document.getElementById('manual-settings').style.pointerEvents = 'none';
+        }
+
+        document.getElementById('cancel-smart-btn').addEventListener('click', () => {
+            document.getElementById('smart-plan').classList.add('hidden');
+            document.getElementById('manual-settings').style.opacity = '1';
+            document.getElementById('manual-settings').style.pointerEvents = 'auto';
+            smartPlanData = null;
+        });
+
+        document.getElementById('apply-smart-btn').addEventListener('click', async () => {
+            if (!smartPlanData || !smartPlanData.operations.length) {
+                showStatus('No plan to apply', 3000);
+                return;
+            }
+
+            showStatus('<span class="loading"></span>Generating multi-tool toolpath...', 0);
+            document.getElementById('apply-smart-btn').disabled = true;
+
+            // For now, apply the first finishing operation
+            // TODO: Generate all operations and combine G-code
+            const finishOp = smartPlanData.operations.find(op =>
+                op.phase === 'finish' || op.phase === 'semi_finish'
+            ) || smartPlanData.operations[0];
+
+            // Set form values from smart plan
+            document.getElementById('strategy').value = finishOp.strategy;
+            document.getElementById('tool-type').value = finishOp.tool.type;
+            document.getElementById('tool-diameter').value = finishOp.tool.diameter;
+            document.getElementById('stepover').value = finishOp.stepover_percent;
+
+            // Update display values
+            document.getElementById('tool-dia-val').textContent = finishOp.tool.diameter;
+            document.getElementById('stepover-val').textContent = finishOp.stepover_percent;
+
+            // Trigger generate
+            document.getElementById('generate-btn').click();
+            document.getElementById('apply-smart-btn').disabled = false;
+        });
 
         // Range input updates
         document.querySelectorAll('input[type="range"]').forEach(input => {
@@ -787,6 +1154,74 @@ def create_app():
 
         except Exception as e:
             logger.exception("Upload failed")
+            return JSONResponse({"error": str(e)}, status_code=400)
+
+    @app.post("/api/scale")
+    async def scale_mesh(request: dict):
+        """Scale a mesh by a given factor."""
+        try:
+            mesh_id = request.get("mesh_id")
+            factor = request.get("factor", 1.0)
+
+            if not mesh_id or mesh_id not in mesh_store:
+                return JSONResponse({"error": "Mesh not found"}, status_code=404)
+
+            if not factor or factor <= 0:
+                return JSONResponse({"error": "Invalid scale factor"}, status_code=400)
+
+            mesh_data = mesh_store[mesh_id]
+            mesh = mesh_data["mesh"]
+
+            # Scale the mesh vertices
+            mesh.vertices *= factor
+
+            # Update stored mesh
+            mesh_store[mesh_id]["mesh"] = mesh
+
+            # Get updated stats
+            stats = {
+                "vertex_count": len(mesh.vertices),
+                "face_count": len(mesh.faces),
+                "is_watertight": bool(mesh.is_watertight),
+                "bounds_min": mesh.bounds[0].tolist(),
+                "bounds_max": mesh.bounds[1].tolist(),
+            }
+
+            logger.info(f"Mesh {mesh_id} scaled by factor {factor}")
+
+            return JSONResponse({
+                "mesh_id": mesh_id,
+                "stats": stats,
+                "vertices": mesh.vertices.tolist(),
+                "faces": mesh.faces.tolist(),
+            })
+
+        except Exception as e:
+            logger.exception("Scale failed")
+            return JSONResponse({"error": str(e)}, status_code=400)
+
+    @app.post("/api/analyze")
+    async def analyze_mesh_smart(request: dict):
+        """Analyze mesh and generate smart multi-tool machining plan."""
+        try:
+            mesh_id = request.get("mesh_id")
+
+            if not mesh_id or mesh_id not in mesh_store:
+                return JSONResponse({"error": "Mesh not found"}, status_code=404)
+
+            mesh_data = mesh_store[mesh_id]
+            mesh = mesh_data["mesh"]
+
+            # Import and run smart strategy analysis
+            from pycam3d.smart_strategy import analyze_mesh_for_smart_strategy
+
+            logger.info(f"Running smart strategy analysis for mesh {mesh_id}")
+            plan = analyze_mesh_for_smart_strategy(mesh, mesh_id)
+
+            return JSONResponse(plan.to_dict())
+
+        except Exception as e:
+            logger.exception("Analysis failed")
             return JSONResponse({"error": str(e)}, status_code=400)
 
     @app.post("/api/generate")
