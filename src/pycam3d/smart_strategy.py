@@ -8,6 +8,7 @@ Theory:
 - Curvature analysis segments surface into regions
 - Each region gets optimal tool/strategy combination
 - Multi-pass approach: Roughing -> Semi-finish -> Finish -> Details
+- Limited to MAX 4 tools from available pool for practical workshop use
 """
 
 from __future__ import annotations
@@ -23,6 +24,31 @@ import trimesh
 from pycam3d.curvature import CurvatureAnalyzer, CurvatureField
 
 logger = logging.getLogger(__name__)
+
+# Maximum number of tools to use (limits tool changes)
+MAX_TOOLS = 4
+
+# Default tool pool - common workshop tools
+DEFAULT_TOOL_POOL = [
+    # Flat end mills (for roughing and flat surfaces)
+    {"type": "flat", "diameter": 20.0, "name": "Flat 20mm"},
+    {"type": "flat", "diameter": 12.0, "name": "Flat 12mm"},
+    {"type": "flat", "diameter": 8.0, "name": "Flat 8mm"},
+    {"type": "flat", "diameter": 6.0, "name": "Flat 6mm"},
+    {"type": "flat", "diameter": 4.0, "name": "Flat 4mm"},
+    {"type": "flat", "diameter": 3.0, "name": "Flat 3mm"},
+    # Ball end mills (for 3D surfaces and finishing)
+    {"type": "ball", "diameter": 12.0, "name": "Ball 12mm"},
+    {"type": "ball", "diameter": 8.0, "name": "Ball 8mm"},
+    {"type": "ball", "diameter": 6.0, "name": "Ball 6mm"},
+    {"type": "ball", "diameter": 4.0, "name": "Ball 4mm"},
+    {"type": "ball", "diameter": 3.0, "name": "Ball 3mm"},
+    {"type": "ball", "diameter": 2.0, "name": "Ball 2mm"},
+    {"type": "ball", "diameter": 1.0, "name": "Ball 1mm"},
+    # Bull nose (for semi-finishing)
+    {"type": "bull", "diameter": 8.0, "corner_radius": 1.0, "name": "Bull 8mm R1"},
+    {"type": "bull", "diameter": 6.0, "corner_radius": 0.5, "name": "Bull 6mm R0.5"},
+]
 
 
 class MachiningPhase(Enum):
@@ -123,6 +149,8 @@ class MachiningPlan:
                 for op in self.operations
             ],
             "total_tools": self.total_tools,
+            "max_tools": MAX_TOOLS,
+            "available_tools": DEFAULT_TOOL_POOL,
             "estimated_time_reduction": self.estimated_time_reduction,
             "quality_improvement": self.quality_improvement,
         }
@@ -272,95 +300,168 @@ class SmartStrategy:
             "std": float(np.std(max_curv)),
         }
 
-    def _recommend_operations(self, mesh_size: np.ndarray) -> List[OperationStep]:
+    def _recommend_operations(
+        self,
+        mesh_size: np.ndarray,
+        available_tools: Optional[List[Dict]] = None
+    ) -> List[OperationStep]:
         """
-        Generate recommended machining operations.
+        Generate recommended machining operations from available tools.
+
+        Selects optimal tools from the pool, limited to MAX_TOOLS (4).
+        Optimizes for speed (fewer tool changes, larger tools when possible).
 
         Args:
             mesh_size: Mesh dimensions [x, y, z]
+            available_tools: Optional list of available tools, uses DEFAULT_TOOL_POOL if None
 
         Returns:
-            List of OperationStep recommendations
+            List of OperationStep recommendations (max 4)
         """
-        operations = []
+        tool_pool = available_tools or DEFAULT_TOOL_POOL
         max_dim = float(np.max(mesh_size))
         min_dim = float(np.min(mesh_size))
 
-        # Determine tool sizes based on mesh size
-        # Rule of thumb: largest tool should be ~10-20% of smallest dimension
-        large_tool_dia = max(1.0, min(25.0, min_dim * 0.15))
-        medium_tool_dia = max(0.5, large_tool_dia * 0.5)
-        small_tool_dia = max(0.25, large_tool_dia * 0.25)
-        detail_tool_dia = max(0.1, large_tool_dia * 0.1)
+        # Calculate ideal tool sizes based on mesh
+        ideal_roughing = min(20.0, min_dim * 0.15)
+        ideal_semifinish = min(12.0, min_dim * 0.08)
+        ideal_finish = min(6.0, min_dim * 0.04)
+        ideal_detail = min(3.0, min_dim * 0.02)
 
-        # Round to standard sizes
-        large_tool_dia = self._round_to_standard_size(large_tool_dia)
-        medium_tool_dia = self._round_to_standard_size(medium_tool_dia)
-        small_tool_dia = self._round_to_standard_size(small_tool_dia)
-        detail_tool_dia = self._round_to_standard_size(detail_tool_dia)
+        # Find best tools from pool for each phase
+        roughing_tool = self._find_best_tool(tool_pool, "flat", ideal_roughing, min_size=3.0)
+        semifinish_tool = self._find_best_tool(tool_pool, "ball", ideal_semifinish, min_size=2.0)
+        finish_tool = self._find_best_tool(tool_pool, "ball", ideal_finish, min_size=1.0)
+        detail_tool = self._find_best_tool(tool_pool, "ball", ideal_detail, min_size=0.5)
 
         # Check which regions are present
-        has_flat = self.region_map.get(RegionType.FLAT, np.array([])).sum() > 0
-        has_curved = (
+        flat_pct = self.region_map.get(RegionType.FLAT, np.array([])).sum()
+        curved_pct = (
             self.region_map.get(RegionType.GENTLE_CURVE, np.array([])).sum() +
             self.region_map.get(RegionType.MODERATE_CURVE, np.array([])).sum()
-        ) > 0
-        has_high_curve = self.region_map.get(RegionType.HIGH_CURVE, np.array([])).sum() > 0
-        has_sharp = self.region_map.get(RegionType.SHARP_FEATURE, np.array([])).sum() > 0
+        )
+        high_curve_pct = self.region_map.get(RegionType.HIGH_CURVE, np.array([])).sum()
+        sharp_pct = self.region_map.get(RegionType.SHARP_FEATURE, np.array([])).sum()
 
-        # Phase 1: ROUGHING - Remove bulk material
-        operations.append(OperationStep(
-            phase=MachiningPhase.ROUGHING,
-            tool=ToolSpec(type="flat", diameter=large_tool_dia),
-            strategy="parallel",
-            stepover_percent=50,
-            z_step=large_tool_dia * 0.5,
-            regions=[RegionType.FLAT, RegionType.GENTLE_CURVE],
-            estimated_time_percent=40,
-            description=f"Bulk material removal with {large_tool_dia}mm flat end mill. "
-                       f"Aggressive stepover for fast stock removal.",
-        ))
+        total = flat_pct + curved_pct + high_curve_pct + sharp_pct + 1  # +1 to avoid div by 0
 
-        # Phase 2: SEMI-FINISH - Intermediate passes
-        if has_curved or has_high_curve:
+        # Build candidate operations
+        candidates = []
+
+        # Always include roughing with largest available flat tool
+        if roughing_tool:
+            candidates.append({
+                "phase": MachiningPhase.ROUGHING,
+                "tool": roughing_tool,
+                "strategy": "parallel",
+                "stepover": 50,
+                "priority": 100,  # Always include roughing
+                "time_pct": 35,
+                "desc": f"Roughing: {roughing_tool['name']} - Fast bulk removal"
+            })
+
+        # Semi-finish if curved surfaces > 10%
+        if semifinish_tool and (curved_pct / total) > 0.1:
+            candidates.append({
+                "phase": MachiningPhase.SEMI_FINISH,
+                "tool": semifinish_tool,
+                "strategy": "iso-scallop",
+                "stepover": 25,
+                "priority": 50 + (curved_pct / total) * 30,
+                "time_pct": 25,
+                "desc": f"Semi-finish: {semifinish_tool['name']} - Curved surfaces"
+            })
+
+        # Finish pass for high curvature
+        if finish_tool and (high_curve_pct / total) > 0.05:
+            candidates.append({
+                "phase": MachiningPhase.FINISH,
+                "tool": finish_tool,
+                "strategy": "spiral",
+                "stepover": 15,
+                "priority": 40 + (high_curve_pct / total) * 40,
+                "time_pct": 25,
+                "desc": f"Finish: {finish_tool['name']} - Smooth surface quality"
+            })
+
+        # Detail pass for sharp features
+        if detail_tool and (sharp_pct / total) > 0.02:
+            candidates.append({
+                "phase": MachiningPhase.DETAIL,
+                "tool": detail_tool,
+                "strategy": "waterline",
+                "stepover": 10,
+                "priority": 30 + (sharp_pct / total) * 50,
+                "time_pct": 15,
+                "desc": f"Detail: {detail_tool['name']} - Fine features"
+            })
+
+        # Sort by priority and take top MAX_TOOLS
+        candidates.sort(key=lambda x: x["priority"], reverse=True)
+        selected = candidates[:MAX_TOOLS]
+
+        # Re-sort by phase order for logical machining sequence
+        phase_order = {
+            MachiningPhase.ROUGHING: 0,
+            MachiningPhase.SEMI_FINISH: 1,
+            MachiningPhase.FINISH: 2,
+            MachiningPhase.DETAIL: 3
+        }
+        selected.sort(key=lambda x: phase_order[x["phase"]])
+
+        # Build operations
+        operations = []
+        for op in selected:
+            tool_spec = ToolSpec(
+                type=op["tool"]["type"],
+                diameter=op["tool"]["diameter"],
+                corner_radius=op["tool"].get("corner_radius", 0.0),
+                name=op["tool"]["name"]
+            )
             operations.append(OperationStep(
-                phase=MachiningPhase.SEMI_FINISH,
-                tool=ToolSpec(type="bull", diameter=medium_tool_dia, corner_radius=medium_tool_dia * 0.1),
-                strategy="iso-scallop",
-                stepover_percent=30,
-                regions=[RegionType.GENTLE_CURVE, RegionType.MODERATE_CURVE],
-                estimated_time_percent=25,
-                description=f"Semi-finishing with {medium_tool_dia}mm bull nose. "
-                           f"Adaptive stepover based on curvature for consistent stock.",
+                phase=op["phase"],
+                tool=tool_spec,
+                strategy=op["strategy"],
+                stepover_percent=op["stepover"],
+                z_step=tool_spec.diameter * 0.5 if op["phase"] == MachiningPhase.ROUGHING else None,
+                regions=[],
+                estimated_time_percent=op["time_pct"],
+                description=op["desc"],
             ))
 
-        # Phase 3: FINISH - Final surface quality
-        if has_curved or has_high_curve:
-            operations.append(OperationStep(
-                phase=MachiningPhase.FINISH,
-                tool=ToolSpec(type="ball", diameter=small_tool_dia),
-                strategy="spiral",
-                stepover_percent=15,
-                regions=[RegionType.MODERATE_CURVE, RegionType.HIGH_CURVE],
-                estimated_time_percent=25,
-                description=f"Finish pass with {small_tool_dia}mm ball nose. "
-                           f"Continuous spiral for smooth surface finish.",
-            ))
-
-        # Phase 4: DETAIL - Fine features
-        if has_sharp:
-            operations.append(OperationStep(
-                phase=MachiningPhase.DETAIL,
-                tool=ToolSpec(type="ball", diameter=detail_tool_dia),
-                strategy="waterline",
-                stepover_percent=10,
-                regions=[RegionType.SHARP_FEATURE],
-                estimated_time_percent=10,
-                description=f"Detail pass with {detail_tool_dia}mm ball nose. "
-                           f"Waterline strategy for sharp features and fine details.",
-            ))
-
+        logger.info(f"Selected {len(operations)} tools from pool (max {MAX_TOOLS})")
         return operations
+
+    def _find_best_tool(
+        self,
+        pool: List[Dict],
+        tool_type: str,
+        ideal_diameter: float,
+        min_size: float = 0.5
+    ) -> Optional[Dict]:
+        """
+        Find the best matching tool from pool.
+
+        Prefers slightly larger than ideal (faster), but not too large.
+        """
+        matching = [t for t in pool if t["type"] == tool_type and t["diameter"] >= min_size]
+        if not matching:
+            # Fallback to any ball/flat if specific type not found
+            matching = [t for t in pool if t["diameter"] >= min_size]
+
+        if not matching:
+            return None
+
+        # Sort by how close they are to ideal, preferring slightly larger
+        def score(t):
+            d = t["diameter"]
+            if d >= ideal_diameter:
+                return abs(d - ideal_diameter)  # Prefer closer to ideal
+            else:
+                return abs(d - ideal_diameter) + 10  # Penalize smaller than ideal
+
+        matching.sort(key=score)
+        return matching[0] if matching else None
 
     @staticmethod
     def _round_to_standard_size(diameter: float) -> float:
