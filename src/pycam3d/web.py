@@ -394,11 +394,20 @@ HTML_TEMPLATE = """
             renderer.render(scene, camera);
         }
 
+        let statusTimeout = null;
         function showStatus(msg, duration = 3000) {
             const status = document.getElementById('status');
             status.innerHTML = msg;
             status.classList.add('show');
-            setTimeout(() => status.classList.remove('show'), duration);
+            if (statusTimeout) clearTimeout(statusTimeout);
+            if (duration > 0) {
+                statusTimeout = setTimeout(() => status.classList.remove('show'), duration);
+            }
+        }
+        function hideStatus() {
+            const status = document.getElementById('status');
+            status.classList.remove('show');
+            if (statusTimeout) clearTimeout(statusTimeout);
         }
 
         // File upload
@@ -418,31 +427,46 @@ HTML_TEMPLATE = """
         });
 
         async function uploadFile(file) {
-            showStatus('<span class="loading"></span>Uploading mesh...');
+            console.log('Starting upload for file:', file.name, 'size:', file.size, 'bytes');
+            showStatus('<span class="loading"></span>Uploading mesh...', 0); // Keep visible
 
             const formData = new FormData();
             formData.append('file', file);
 
             try {
+                console.log('Sending fetch request to /api/upload...');
                 const response = await fetch('/api/upload', { method: 'POST', body: formData });
+                console.log('Response received, status:', response.status);
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    console.error('Server error:', response.status, errorText);
+                    showStatus('Server error: ' + response.status + ' - ' + errorText, 5000);
+                    return;
+                }
+
+                console.log('Parsing JSON response...');
                 const data = await response.json();
+                console.log('Upload response:', data);
 
                 if (data.error) {
-                    showStatus('Error: ' + data.error);
+                    console.error('API error:', data.error);
+                    showStatus('Error: ' + data.error, 5000);
                     return;
                 }
 
                 currentMeshId = data.mesh_id;
-                
-                console.log('Upload response:', data);
+                console.log('Mesh ID:', currentMeshId);
                 console.log('Vertices count:', data.vertices ? data.vertices.length : 'undefined');
                 console.log('Faces count:', data.faces ? data.faces.length : 'undefined');
-                
+
                 try {
+                    console.log('Calling displayMesh...');
                     displayMesh(data);
                     showStatus('Mesh loaded successfully!');
                     document.getElementById('mesh-info').classList.remove('hidden');
                     document.getElementById('toolpath-section').classList.remove('hidden');
+                    console.log('Display complete');
                 } catch (displayErr) {
                     console.error('Display error:', displayErr);
                     showStatus('Error displaying mesh: ' + displayErr.message, 5000);
@@ -450,7 +474,7 @@ HTML_TEMPLATE = """
 
             } catch (err) {
                 console.error('Upload error:', err);
-                showStatus('Upload failed: ' + err.message);
+                showStatus('Upload failed: ' + err.message, 5000);
             }
         }
 
