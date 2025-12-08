@@ -318,48 +318,65 @@ HTML_TEMPLATE = """
             <div id="toolpath-section" class="card hidden">
                 <h2>Toolpath Settings</h2>
 
-                <div class="form-group">
-                    <label>Strategy</label>
-                    <select id="strategy">
-                        <option value="iso-scallop">Iso-Scallop (Adaptive)</option>
-                        <option value="spiral">Spiral (Continuous)</option>
-                        <option value="parallel">Parallel Lines</option>
-                        <option value="waterline">Waterline</option>
-                    </select>
-                </div>
-
-                <div class="form-group">
-                    <label>Tool Type</label>
-                    <select id="tool-type">
-                        <option value="ball">Ball End Mill</option>
-                        <option value="flat">Flat End Mill</option>
-                        <option value="bull">Bull Nose</option>
-                    </select>
-                </div>
-
-                <div class="form-group">
-                    <label>Tool Diameter <span class="range-value" id="tool-dia-val">6</span> mm</label>
-                    <input type="range" id="tool-diameter" min="1" max="25" value="6" step="0.5">
-                </div>
-
-                <div class="form-group">
-                    <label>Stepover <span class="range-value" id="stepover-val">15</span>%</label>
-                    <input type="range" id="stepover" min="5" max="50" value="15">
-                </div>
-
-                <div class="form-group">
-                    <label>Feed Rate <span class="range-value" id="feed-val">1000</span> mm/min</label>
-                    <input type="range" id="feed-rate" min="100" max="5000" value="1000" step="100">
-                </div>
-
-                <div class="form-group">
-                    <label>Spindle Speed <span class="range-value" id="spindle-val">12000</span> RPM</label>
-                    <input type="range" id="spindle-rpm" min="1000" max="24000" value="12000" step="1000">
-                </div>
-
-                <button class="btn-primary" id="generate-btn">
-                    Generate Toolpath
+                <button class="btn-success" id="smart-btn" style="margin-bottom: 15px;">
+                    Smart Strategy (Auto-Optimize)
                 </button>
+
+                <div id="smart-plan" class="hidden" style="margin-bottom: 15px;">
+                    <div style="background: rgba(0,255,136,0.1); border-radius: 8px; padding: 12px; margin-bottom: 10px;">
+                        <h3 style="margin: 0 0 10px 0; color: #00ff88; font-size: 0.95rem;">Recommended Plan</h3>
+                        <div id="smart-plan-content"></div>
+                    </div>
+                    <div class="btn-group">
+                        <button class="btn-primary btn-small" id="apply-smart-btn">Apply & Generate All</button>
+                        <button class="btn-secondary btn-small" id="cancel-smart-btn">Manual Mode</button>
+                    </div>
+                </div>
+
+                <div id="manual-settings">
+                    <div class="form-group">
+                        <label>Strategy</label>
+                        <select id="strategy">
+                            <option value="iso-scallop">Iso-Scallop (Adaptive)</option>
+                            <option value="spiral">Spiral (Continuous)</option>
+                            <option value="parallel">Parallel Lines</option>
+                            <option value="waterline">Waterline</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Tool Type</label>
+                        <select id="tool-type">
+                            <option value="ball">Ball End Mill</option>
+                            <option value="flat">Flat End Mill</option>
+                            <option value="bull">Bull Nose</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Tool Diameter <span class="range-value" id="tool-dia-val">6</span> mm</label>
+                        <input type="range" id="tool-diameter" min="1" max="25" value="6" step="0.5">
+                    </div>
+
+                    <div class="form-group">
+                        <label>Stepover <span class="range-value" id="stepover-val">15</span>%</label>
+                        <input type="range" id="stepover" min="5" max="50" value="15">
+                    </div>
+
+                    <div class="form-group">
+                        <label>Feed Rate <span class="range-value" id="feed-val">1000</span> mm/min</label>
+                        <input type="range" id="feed-rate" min="100" max="5000" value="1000" step="100">
+                    </div>
+
+                    <div class="form-group">
+                        <label>Spindle Speed <span class="range-value" id="spindle-val">12000</span> RPM</label>
+                        <input type="range" id="spindle-rpm" min="1000" max="24000" value="12000" step="1000">
+                    </div>
+
+                    <button class="btn-primary" id="generate-btn">
+                        Generate Toolpath
+                    </button>
+                </div>
             </div>
 
             <div id="result-section" class="card hidden">
@@ -744,6 +761,133 @@ HTML_TEMPLATE = """
             }
         }
 
+        // Smart Strategy functions
+        let smartPlanData = null;
+
+        document.getElementById('smart-btn').addEventListener('click', async () => {
+            if (!currentMeshId) return;
+
+            showStatus('<span class="loading"></span>Analyzing mesh geometry...', 0);
+            document.getElementById('smart-btn').disabled = true;
+
+            try {
+                const response = await fetch('/api/analyze', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ mesh_id: currentMeshId })
+                });
+                const data = await response.json();
+
+                if (data.error) {
+                    showStatus('Analysis error: ' + data.error, 5000);
+                    return;
+                }
+
+                smartPlanData = data;
+                displaySmartPlan(data);
+                showStatus('Analysis complete! Review the recommended plan.', 3000);
+
+            } catch (err) {
+                console.error('Analysis error:', err);
+                showStatus('Analysis failed: ' + err.message, 5000);
+            } finally {
+                document.getElementById('smart-btn').disabled = false;
+            }
+        });
+
+        function displaySmartPlan(plan) {
+            const container = document.getElementById('smart-plan-content');
+
+            // Region analysis summary
+            let html = '<div style="font-size: 0.8rem; color: #888; margin-bottom: 10px;">';
+            html += `<div>Surface: ${plan.region_analysis.flat_percent?.toFixed(0) || 0}% flat, `;
+            html += `${(plan.region_analysis.gentle_curve_percent + plan.region_analysis.moderate_curve_percent)?.toFixed(0) || 0}% curved, `;
+            html += `${plan.region_analysis.sharp_feature_percent?.toFixed(0) || 0}% detail</div>`;
+            html += '</div>';
+
+            // Operations
+            html += '<div style="display: flex; flex-direction: column; gap: 8px;">';
+
+            const phaseColors = {
+                'roughing': '#ff6b6b',
+                'semi_finish': '#ffd93d',
+                'finish': '#6bcf6b',
+                'detail': '#6b9fff'
+            };
+
+            const phaseLabels = {
+                'roughing': 'ROUGHING',
+                'semi_finish': 'SEMI-FINISH',
+                'finish': 'FINISH',
+                'detail': 'DETAIL'
+            };
+
+            plan.operations.forEach((op, idx) => {
+                const color = phaseColors[op.phase] || '#888';
+                html += `<div style="background: rgba(255,255,255,0.05); padding: 8px; border-radius: 6px; border-left: 3px solid ${color};">`;
+                html += `<div style="display: flex; justify-content: space-between; align-items: center;">`;
+                html += `<span style="font-weight: 600; color: ${color}; font-size: 0.75rem;">${phaseLabels[op.phase]}</span>`;
+                html += `<span style="font-size: 0.7rem; color: #666;">${op.estimated_time_percent}% time</span>`;
+                html += `</div>`;
+                html += `<div style="font-size: 0.85rem; margin-top: 4px;">`;
+                html += `<strong>${op.tool.name}</strong> - ${op.strategy} @ ${op.stepover_percent}%`;
+                html += `</div>`;
+                html += `</div>`;
+            });
+
+            html += '</div>';
+
+            // Summary
+            html += `<div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.1); font-size: 0.8rem;">`;
+            html += `<div style="color: #00ff88;">Est. time reduction: ${plan.estimated_time_reduction}</div>`;
+            html += `<div style="color: #00d4ff;">Quality improvement: ${plan.quality_improvement}</div>`;
+            html += `</div>`;
+
+            container.innerHTML = html;
+
+            // Show plan, hide manual settings
+            document.getElementById('smart-plan').classList.remove('hidden');
+            document.getElementById('manual-settings').style.opacity = '0.5';
+            document.getElementById('manual-settings').style.pointerEvents = 'none';
+        }
+
+        document.getElementById('cancel-smart-btn').addEventListener('click', () => {
+            document.getElementById('smart-plan').classList.add('hidden');
+            document.getElementById('manual-settings').style.opacity = '1';
+            document.getElementById('manual-settings').style.pointerEvents = 'auto';
+            smartPlanData = null;
+        });
+
+        document.getElementById('apply-smart-btn').addEventListener('click', async () => {
+            if (!smartPlanData || !smartPlanData.operations.length) {
+                showStatus('No plan to apply', 3000);
+                return;
+            }
+
+            showStatus('<span class="loading"></span>Generating multi-tool toolpath...', 0);
+            document.getElementById('apply-smart-btn').disabled = true;
+
+            // For now, apply the first finishing operation
+            // TODO: Generate all operations and combine G-code
+            const finishOp = smartPlanData.operations.find(op =>
+                op.phase === 'finish' || op.phase === 'semi_finish'
+            ) || smartPlanData.operations[0];
+
+            // Set form values from smart plan
+            document.getElementById('strategy').value = finishOp.strategy;
+            document.getElementById('tool-type').value = finishOp.tool.type;
+            document.getElementById('tool-diameter').value = finishOp.tool.diameter;
+            document.getElementById('stepover').value = finishOp.stepover_percent;
+
+            // Update display values
+            document.getElementById('tool-dia-val').textContent = finishOp.tool.diameter;
+            document.getElementById('stepover-val').textContent = finishOp.stepover_percent;
+
+            // Trigger generate
+            document.getElementById('generate-btn').click();
+            document.getElementById('apply-smart-btn').disabled = false;
+        });
+
         // Range input updates
         document.querySelectorAll('input[type="range"]').forEach(input => {
             const valSpan = document.getElementById(input.id.replace('-', '-') + '-val') ||
@@ -1054,6 +1198,30 @@ def create_app():
 
         except Exception as e:
             logger.exception("Scale failed")
+            return JSONResponse({"error": str(e)}, status_code=400)
+
+    @app.post("/api/analyze")
+    async def analyze_mesh_smart(request: dict):
+        """Analyze mesh and generate smart multi-tool machining plan."""
+        try:
+            mesh_id = request.get("mesh_id")
+
+            if not mesh_id or mesh_id not in mesh_store:
+                return JSONResponse({"error": "Mesh not found"}, status_code=404)
+
+            mesh_data = mesh_store[mesh_id]
+            mesh = mesh_data["mesh"]
+
+            # Import and run smart strategy analysis
+            from pycam3d.smart_strategy import analyze_mesh_for_smart_strategy
+
+            logger.info(f"Running smart strategy analysis for mesh {mesh_id}")
+            plan = analyze_mesh_for_smart_strategy(mesh, mesh_id)
+
+            return JSONResponse(plan.to_dict())
+
+        except Exception as e:
+            logger.exception("Analysis failed")
             return JSONResponse({"error": str(e)}, status_code=400)
 
     @app.post("/api/generate")
