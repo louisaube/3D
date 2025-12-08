@@ -131,6 +131,45 @@ HTML_TEMPLATE = """
             background: linear-gradient(135deg, #00ff88 0%, #00cc6a 100%);
             color: #000;
         }
+        .btn-small {
+            width: auto;
+            padding: 8px 12px;
+            font-size: 0.85rem;
+            margin: 0;
+        }
+        .btn-group {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        .btn-icon {
+            width: 36px;
+            height: 36px;
+            padding: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.1rem;
+        }
+        .scale-input-group {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+        .scale-input-group input[type="number"] {
+            width: 80px;
+            text-align: center;
+        }
+        .scale-presets {
+            display: flex;
+            gap: 6px;
+            margin-top: 8px;
+            flex-wrap: wrap;
+        }
+        .scale-presets button {
+            flex: 1;
+            min-width: 60px;
+        }
         .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
         .stat-item {
             background: rgba(0,212,255,0.1);
@@ -228,6 +267,50 @@ HTML_TEMPLATE = """
                     <div class="stat-item">
                         <div class="stat-value" id="stat-watertight">-</div>
                         <div class="stat-label">Watertight</div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="view-controls" class="card hidden">
+                <h2>View & Transform</h2>
+
+                <div class="form-group">
+                    <label>Camera Views</label>
+                    <div class="btn-group">
+                        <button class="btn-secondary btn-small" onclick="resetView()">Reset</button>
+                        <button class="btn-secondary btn-small" onclick="setView('top')">Top</button>
+                        <button class="btn-secondary btn-small" onclick="setView('front')">Front</button>
+                        <button class="btn-secondary btn-small" onclick="setView('side')">Side</button>
+                        <button class="btn-secondary btn-small" onclick="setView('iso')">Iso</button>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>Scale Factor</label>
+                    <div class="scale-input-group">
+                        <input type="number" id="scale-factor" value="1.0" min="0.001" max="1000" step="0.1">
+                        <button class="btn-secondary btn-small" onclick="applyScale()">Apply</button>
+                    </div>
+                    <div class="scale-presets">
+                        <button class="btn-secondary btn-small" onclick="setScale(0.1)">0.1x</button>
+                        <button class="btn-secondary btn-small" onclick="setScale(0.5)">0.5x</button>
+                        <button class="btn-secondary btn-small" onclick="setScale(2)">2x</button>
+                        <button class="btn-secondary btn-small" onclick="setScale(10)">10x</button>
+                        <button class="btn-secondary btn-small" onclick="setScale(25.4)">in→mm</button>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>Target Size (mm)</label>
+                    <div class="scale-input-group">
+                        <input type="number" id="target-size" placeholder="e.g. 100" min="0.1" step="1">
+                        <select id="target-axis">
+                            <option value="max">Max</option>
+                            <option value="x">X</option>
+                            <option value="y">Y</option>
+                            <option value="z">Z</option>
+                        </select>
+                        <button class="btn-secondary btn-small" onclick="scaleToSize()">Fit</button>
                     </div>
                 </div>
             </div>
@@ -333,6 +416,13 @@ HTML_TEMPLATE = """
         let currentMeshId = null;
         let gcodeData = null;
         let animationId = null;
+
+        // Store initial mesh data for reset and scaling
+        let meshData = null;
+        let meshCenter = new THREE.Vector3();
+        let meshSize = new THREE.Vector3();
+        let initialCameraPos = new THREE.Vector3();
+        let initialControlsTarget = new THREE.Vector3();
 
         function init() {
             scene = new THREE.Scene();
@@ -465,6 +555,7 @@ HTML_TEMPLATE = """
                     displayMesh(data);
                     showStatus('Mesh loaded successfully!');
                     document.getElementById('mesh-info').classList.remove('hidden');
+                    document.getElementById('view-controls').classList.remove('hidden');
                     document.getElementById('toolpath-section').classList.remove('hidden');
                     console.log('Display complete');
                 } catch (displayErr) {
@@ -524,6 +615,11 @@ HTML_TEMPLATE = """
             console.log('Mesh center:', center);
             console.log('Mesh size:', size, 'maxDim:', maxDim);
 
+            // Store mesh data for reset and scaling
+            meshData = data;
+            meshCenter.copy(center);
+            meshSize.copy(size);
+
             // Adjust camera clipping planes based on mesh size
             const distance = maxDim * 2;
             camera.near = maxDim * 0.001;  // 0.1% of mesh size
@@ -538,11 +634,114 @@ HTML_TEMPLATE = """
             controls.target.copy(center);
             controls.update();
 
+            // Store initial camera position for reset
+            initialCameraPos.copy(camera.position);
+            initialControlsTarget.copy(controls.target);
+
             // Update stats
             document.getElementById('stat-vertices').textContent = data.stats.vertex_count.toLocaleString();
             document.getElementById('stat-faces').textContent = data.stats.face_count.toLocaleString();
             document.getElementById('stat-size').textContent = `${size.x.toFixed(1)}x${size.y.toFixed(1)}x${size.z.toFixed(1)}`;
             document.getElementById('stat-watertight').textContent = data.stats.is_watertight ? '✓' : '✗';
+        }
+
+        // View control functions
+        function resetView() {
+            if (!meshObject) return;
+            camera.position.copy(initialCameraPos);
+            controls.target.copy(initialControlsTarget);
+            controls.update();
+            console.log('View reset to initial position');
+        }
+
+        function setView(type) {
+            if (!meshObject) return;
+            const maxDim = Math.max(meshSize.x, meshSize.y, meshSize.z);
+            const distance = maxDim * 2.5;
+
+            switch(type) {
+                case 'top':
+                    camera.position.set(meshCenter.x, meshCenter.y + distance, meshCenter.z);
+                    break;
+                case 'front':
+                    camera.position.set(meshCenter.x, meshCenter.y, meshCenter.z + distance);
+                    break;
+                case 'side':
+                    camera.position.set(meshCenter.x + distance, meshCenter.y, meshCenter.z);
+                    break;
+                case 'iso':
+                default:
+                    camera.position.set(
+                        meshCenter.x + distance * 0.7,
+                        meshCenter.y + distance * 0.7,
+                        meshCenter.z + distance * 0.7
+                    );
+                    break;
+            }
+            camera.lookAt(meshCenter);
+            controls.target.copy(meshCenter);
+            controls.update();
+            console.log('View set to:', type);
+        }
+
+        // Scale functions
+        function setScale(factor) {
+            document.getElementById('scale-factor').value = factor;
+        }
+
+        async function applyScale() {
+            const factor = parseFloat(document.getElementById('scale-factor').value);
+            if (!factor || factor <= 0 || !currentMeshId) {
+                showStatus('Invalid scale factor', 3000);
+                return;
+            }
+            await scaleMesh(factor);
+        }
+
+        async function scaleToSize() {
+            const targetSize = parseFloat(document.getElementById('target-size').value);
+            const axis = document.getElementById('target-axis').value;
+            if (!targetSize || targetSize <= 0 || !currentMeshId) {
+                showStatus('Enter a valid target size', 3000);
+                return;
+            }
+
+            let currentSize;
+            switch(axis) {
+                case 'x': currentSize = meshSize.x; break;
+                case 'y': currentSize = meshSize.y; break;
+                case 'z': currentSize = meshSize.z; break;
+                default: currentSize = Math.max(meshSize.x, meshSize.y, meshSize.z);
+            }
+
+            const factor = targetSize / currentSize;
+            document.getElementById('scale-factor').value = factor.toFixed(4);
+            await scaleMesh(factor);
+        }
+
+        async function scaleMesh(factor) {
+            showStatus('<span class="loading"></span>Scaling mesh...', 0);
+            try {
+                const response = await fetch('/api/scale', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ mesh_id: currentMeshId, factor: factor })
+                });
+                const data = await response.json();
+                if (data.error) {
+                    showStatus('Error: ' + data.error, 5000);
+                    return;
+                }
+                // Update mesh display with new data
+                displayMesh(data);
+                showStatus(`Mesh scaled by ${factor.toFixed(3)}x`, 3000);
+                // Update stats
+                document.getElementById('stat-size').textContent =
+                    `${meshSize.x.toFixed(1)}x${meshSize.y.toFixed(1)}x${meshSize.z.toFixed(1)}`;
+            } catch (err) {
+                console.error('Scale error:', err);
+                showStatus('Scale failed: ' + err.message, 5000);
+            }
         }
 
         // Range input updates
@@ -811,6 +1010,50 @@ def create_app():
 
         except Exception as e:
             logger.exception("Upload failed")
+            return JSONResponse({"error": str(e)}, status_code=400)
+
+    @app.post("/api/scale")
+    async def scale_mesh(request: dict):
+        """Scale a mesh by a given factor."""
+        try:
+            mesh_id = request.get("mesh_id")
+            factor = request.get("factor", 1.0)
+
+            if not mesh_id or mesh_id not in mesh_store:
+                return JSONResponse({"error": "Mesh not found"}, status_code=404)
+
+            if not factor or factor <= 0:
+                return JSONResponse({"error": "Invalid scale factor"}, status_code=400)
+
+            mesh_data = mesh_store[mesh_id]
+            mesh = mesh_data["mesh"]
+
+            # Scale the mesh vertices
+            mesh.vertices *= factor
+
+            # Update stored mesh
+            mesh_store[mesh_id]["mesh"] = mesh
+
+            # Get updated stats
+            stats = {
+                "vertex_count": len(mesh.vertices),
+                "face_count": len(mesh.faces),
+                "is_watertight": bool(mesh.is_watertight),
+                "bounds_min": mesh.bounds[0].tolist(),
+                "bounds_max": mesh.bounds[1].tolist(),
+            }
+
+            logger.info(f"Mesh {mesh_id} scaled by factor {factor}")
+
+            return JSONResponse({
+                "mesh_id": mesh_id,
+                "stats": stats,
+                "vertices": mesh.vertices.tolist(),
+                "faces": mesh.faces.tolist(),
+            })
+
+        except Exception as e:
+            logger.exception("Scale failed")
             return JSONResponse({"error": str(e)}, status_code=400)
 
     @app.post("/api/generate")
