@@ -809,12 +809,35 @@ HTML_TEMPLATE = """
         function displaySmartPlan(plan) {
             const container = document.getElementById('smart-plan-content');
 
+            // Tool pool header with selection info
+            let html = '<div style="background: rgba(0,212,255,0.1); border-radius: 6px; padding: 10px; margin-bottom: 12px;">';
+            html += `<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">`;
+            html += `<span style="font-weight: 600; color: #00d4ff; font-size: 0.9rem;">🔧 Pool de Fraises</span>`;
+            html += `<span style="background: ${plan.total_tools <= plan.max_tools ? '#00ff88' : '#ff6b6b'}; color: #000; padding: 2px 8px; border-radius: 10px; font-size: 0.75rem; font-weight: 700;">${plan.total_tools}/${plan.max_tools} MAX</span>`;
+            html += `</div>`;
+
+            // Show available tools in compact format
+            html += `<div style="font-size: 0.7rem; color: #888;">`;
+            const toolsByType = {};
+            (plan.available_tools || []).forEach(t => {
+                if (!toolsByType[t.type]) toolsByType[t.type] = [];
+                toolsByType[t.type].push(t.diameter);
+            });
+            const typeLabels = {flat: 'Plates', ball: 'Boules', bull: 'Toriques'};
+            Object.keys(toolsByType).forEach(type => {
+                html += `<div>${typeLabels[type] || type}: ${toolsByType[type].sort((a,b)=>a-b).join(', ')}mm</div>`;
+            });
+            html += `</div></div>`;
+
             // Region analysis summary
-            let html = '<div style="font-size: 0.8rem; color: #888; margin-bottom: 10px;">';
+            html += '<div style="font-size: 0.8rem; color: #888; margin-bottom: 10px;">';
             html += `<div>Surface: ${plan.region_analysis.flat_percent?.toFixed(0) || 0}% flat, `;
             html += `${(plan.region_analysis.gentle_curve_percent + plan.region_analysis.moderate_curve_percent)?.toFixed(0) || 0}% curved, `;
             html += `${plan.region_analysis.sharp_feature_percent?.toFixed(0) || 0}% detail</div>`;
             html += '</div>';
+
+            // Selected operations header
+            html += '<div style="font-size: 0.75rem; color: #00ff88; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 1px;">Fraises sélectionnées</div>';
 
             // Operations
             html += '<div style="display: flex; flex-direction: column; gap: 8px;">';
