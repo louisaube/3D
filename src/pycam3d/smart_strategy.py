@@ -188,7 +188,7 @@ class SmartStrategy:
     }
 
     # Max vertices for full curvature analysis (above this, use sampling)
-    MAX_VERTICES_FULL_ANALYSIS = 10000
+    MAX_VERTICES_FULL_ANALYSIS = 12000
 
     def __init__(self, mesh: trimesh.Trimesh, mesh_id: str = "", fast_mode: bool = True):
         """
