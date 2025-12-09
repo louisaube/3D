@@ -187,35 +187,60 @@ class SmartStrategy:
         RegionType.UNDERCUT: ("waterline", 15),
     }
 
-    def __init__(self, mesh: trimesh.Trimesh, mesh_id: str = ""):
+    # Max vertices for full curvature analysis (above this, use sampling)
+    MAX_VERTICES_FULL_ANALYSIS = 10000
+
+    def __init__(self, mesh: trimesh.Trimesh, mesh_id: str = "", fast_mode: bool = True):
         """
         Initialize smart strategy analyzer.
 
         Args:
             mesh: Trimesh mesh object
             mesh_id: Optional mesh identifier
+            fast_mode: If True, use sampling for large meshes (default: True)
         """
         self.mesh = mesh
         self.mesh_id = mesh_id
-        self.curvature_analyzer = CurvatureAnalyzer(mesh)
+        self.fast_mode = fast_mode
+
+        # For large meshes in fast mode, use a sampled version for analysis
+        if fast_mode and len(mesh.vertices) > self.MAX_VERTICES_FULL_ANALYSIS:
+            self.analysis_mesh = self._create_sample_mesh(mesh)
+            logger.info(f"Fast mode: sampled {len(mesh.vertices)} -> {len(self.analysis_mesh.vertices)} vertices")
+        else:
+            self.analysis_mesh = mesh
+
+        self.curvature_analyzer = CurvatureAnalyzer(self.analysis_mesh)
         self.curvature_field: Optional[CurvatureField] = None
         self.region_map: Dict[RegionType, np.ndarray] = {}
+
+    def _create_sample_mesh(self, mesh: trimesh.Trimesh) -> trimesh.Trimesh:
+        """Create a simplified mesh for fast analysis."""
+        target_faces = min(self.MAX_VERTICES_FULL_ANALYSIS, len(mesh.faces))
+        try:
+            # Try quadric decimation first
+            return mesh.simplify_quadric_decimation(target_faces)
+        except Exception:
+            # Fallback: random face sampling
+            indices = np.random.choice(len(mesh.faces), target_faces, replace=False)
+            return mesh.submesh([indices], append=True)
 
     def analyze(self) -> MachiningPlan:
         """
         Perform complete mesh analysis and generate machining plan.
+        Uses fast mode by default for large meshes.
 
         Returns:
             MachiningPlan with recommended operations
         """
-        logger.info("Starting smart strategy analysis...")
+        logger.info(f"Starting smart strategy analysis (fast_mode={self.fast_mode})...")
 
-        # Compute mesh properties
+        # Compute mesh properties from FULL mesh
         bounds = self.mesh.bounds
         size = bounds[1] - bounds[0]
         volume = self.mesh.volume if self.mesh.is_watertight else 0
 
-        # Analyze curvature
+        # Analyze curvature (on sampled mesh if fast mode)
         self._analyze_curvature()
 
         # Segment into regions

@@ -1148,6 +1148,24 @@ def create_app():
     async def index():
         return HTML_TEMPLATE
 
+    # Max faces for visualization (prevents browser lag)
+    MAX_DISPLAY_FACES = 50000
+
+    def decimate_for_display(mesh, max_faces=MAX_DISPLAY_FACES):
+        """Decimate mesh for fast browser display."""
+        if len(mesh.faces) <= max_faces:
+            return mesh
+        # Use trimesh's simplify_quadric_decimation if available
+        try:
+            ratio = max_faces / len(mesh.faces)
+            simplified = mesh.simplify_quadric_decimation(int(len(mesh.faces) * ratio))
+            logger.info(f"Decimated mesh: {len(mesh.faces)} -> {len(simplified.faces)} faces")
+            return simplified
+        except Exception:
+            # Fallback: random face sampling
+            indices = np.random.choice(len(mesh.faces), max_faces, replace=False)
+            return mesh.submesh([indices], append=True)
+
     @app.post("/api/upload")
     async def upload_mesh(file: UploadFile = File(...)):
         """Upload and analyze a mesh file."""
@@ -1162,14 +1180,14 @@ def create_app():
             # Load with trimesh
             mesh = trimesh.load_mesh(tmp_path)
 
-            # Generate ID and store
+            # Generate ID and store FULL mesh for analysis
             mesh_id = str(uuid.uuid4())[:8]
             mesh_store[mesh_id] = {
                 "mesh": mesh,
                 "path": tmp_path,
             }
 
-            # Get stats
+            # Get stats from FULL mesh
             stats = {
                 "vertex_count": len(mesh.vertices),
                 "face_count": len(mesh.faces),
@@ -1178,12 +1196,16 @@ def create_app():
                 "bounds_max": mesh.bounds[1].tolist(),
             }
 
+            # Decimate for DISPLAY only
+            display_mesh = decimate_for_display(mesh)
+
             return JSONResponse({
                 "mesh_id": mesh_id,
                 "filename": file.filename,
                 "stats": stats,
-                "vertices": mesh.vertices.tolist(),
-                "faces": mesh.faces.tolist(),
+                "vertices": display_mesh.vertices.tolist(),
+                "faces": display_mesh.faces.tolist(),
+                "decimated": len(display_mesh.faces) < len(mesh.faces),
             })
 
         except Exception as e:
@@ -1223,11 +1245,14 @@ def create_app():
 
             logger.info(f"Mesh {mesh_id} scaled by factor {factor}")
 
+            # Decimate for display
+            display_mesh = decimate_for_display(mesh)
+
             return JSONResponse({
                 "mesh_id": mesh_id,
                 "stats": stats,
-                "vertices": mesh.vertices.tolist(),
-                "faces": mesh.faces.tolist(),
+                "vertices": display_mesh.vertices.tolist(),
+                "faces": display_mesh.faces.tolist(),
             })
 
         except Exception as e:
