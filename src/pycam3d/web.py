@@ -318,6 +318,21 @@ HTML_TEMPLATE = """
             <div id="toolpath-section" class="card hidden">
                 <h2>Toolpath Settings</h2>
 
+                <div class="form-group" style="margin-bottom: 15px;">
+                    <label>Matériau</label>
+                    <select id="material-select">
+                        <option value="aluminum">Aluminium</option>
+                        <option value="wood_soft">Bois tendre</option>
+                        <option value="wood_hard">Bois dur</option>
+                        <option value="plastic_soft">Plastique souple</option>
+                        <option value="plastic_hard">Plastique dur</option>
+                        <option value="brass">Laiton</option>
+                        <option value="steel_mild">Acier doux</option>
+                        <option value="foam">Mousse</option>
+                        <option value="mdf">MDF</option>
+                    </select>
+                </div>
+
                 <button class="btn-success" id="smart-btn" style="margin-bottom: 15px;">
                     Smart Strategy (Auto-Optimize)
                 </button>
@@ -782,10 +797,11 @@ HTML_TEMPLATE = """
             document.getElementById('smart-btn').disabled = true;
 
             try {
+                const material = document.getElementById('material-select').value;
                 const response = await fetch('/api/analyze', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ mesh_id: currentMeshId })
+                    body: JSON.stringify({ mesh_id: currentMeshId, material: material })
                 });
                 const data = await response.json();
 
@@ -858,6 +874,7 @@ HTML_TEMPLATE = """
 
             plan.operations.forEach((op, idx) => {
                 const color = phaseColors[op.phase] || '#888';
+                const cp = op.cutting_params || {};
                 html += `<div style="background: rgba(255,255,255,0.05); padding: 8px; border-radius: 6px; border-left: 3px solid ${color};">`;
                 html += `<div style="display: flex; justify-content: space-between; align-items: center;">`;
                 html += `<span style="font-weight: 600; color: ${color}; font-size: 0.75rem;">${phaseLabels[op.phase]}</span>`;
@@ -866,10 +883,25 @@ HTML_TEMPLATE = """
                 html += `<div style="font-size: 0.85rem; margin-top: 4px;">`;
                 html += `<strong>${op.tool.name}</strong> - ${op.strategy} @ ${op.stepover_percent}%`;
                 html += `</div>`;
+                if (cp.spindle_rpm) {
+                    html += `<div style="font-size: 0.7rem; color: #888; margin-top: 4px; display: grid; grid-template-columns: 1fr 1fr; gap: 4px;">`;
+                    html += `<span>⚡ ${cp.spindle_rpm} RPM</span>`;
+                    html += `<span>➡️ F${Math.round(cp.feed_rate)}</span>`;
+                    html += `<span>⬇️ DOC ${cp.depth_of_cut}mm</span>`;
+                    html += `<span>↔️ Step ${cp.stepover}mm</span>`;
+                    html += `</div>`;
+                }
                 html += `</div>`;
             });
 
             html += '</div>';
+
+            // Material info
+            if (plan.material) {
+                html += `<div style="margin-top: 10px; padding: 8px; background: rgba(255,255,255,0.03); border-radius: 6px;">`;
+                html += `<div style="font-size: 0.75rem; color: #888;">Matériau: <span style="color: ${plan.material.color}; font-weight: 600;">${plan.material.name}</span></div>`;
+                html += `</div>`;
+            }
 
             // Summary
             html += `<div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.1); font-size: 0.8rem;">`;
@@ -1259,11 +1291,33 @@ def create_app():
             logger.exception("Scale failed")
             return JSONResponse({"error": str(e)}, status_code=400)
 
+    @app.get("/api/materials")
+    async def get_materials():
+        """Get list of available materials with cutting properties."""
+        from pycam3d.materials import get_material_list
+        return JSONResponse({"materials": get_material_list()})
+
+    @app.post("/api/cutting-params")
+    async def get_cutting_params(request: dict):
+        """Calculate cutting parameters for material and tool."""
+        from pycam3d.materials import calculate_cutting_params, MaterialType
+        try:
+            material = request.get("material", "aluminum")
+            tool_diameter = float(request.get("tool_diameter", 6.0))
+            is_finishing = request.get("is_finishing", False)
+
+            mat_type = MaterialType(material)
+            params = calculate_cutting_params(mat_type, tool_diameter, is_finishing=is_finishing)
+            return JSONResponse(params.to_dict())
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+
     @app.post("/api/analyze")
     async def analyze_mesh_smart(request: dict):
         """Analyze mesh and generate smart multi-tool machining plan."""
         try:
             mesh_id = request.get("mesh_id")
+            material = request.get("material", "aluminum")
 
             if not mesh_id or mesh_id not in mesh_store:
                 return JSONResponse({"error": "Mesh not found"}, status_code=404)
@@ -1273,11 +1327,26 @@ def create_app():
 
             # Import and run smart strategy analysis
             from pycam3d.smart_strategy import analyze_mesh_for_smart_strategy
+            from pycam3d.materials import calculate_cutting_params, MaterialType, MATERIALS
 
             logger.info(f"Running smart strategy analysis for mesh {mesh_id}")
             plan = analyze_mesh_for_smart_strategy(mesh, mesh_id)
 
-            return JSONResponse(plan.to_dict())
+            # Add cutting parameters for each operation
+            result = plan.to_dict()
+            try:
+                mat_type = MaterialType(material)
+                mat_info = MATERIALS[mat_type]
+                result["material"] = {"type": material, "name": mat_info.name, "color": mat_info.color}
+
+                for op in result["operations"]:
+                    is_finish = op["phase"] in ["finish", "detail"]
+                    params = calculate_cutting_params(mat_type, op["tool"]["diameter"], is_finishing=is_finish)
+                    op["cutting_params"] = params.to_dict()
+            except Exception:
+                pass  # Material params optional
+
+            return JSONResponse(result)
 
         except Exception as e:
             logger.exception("Analysis failed")
