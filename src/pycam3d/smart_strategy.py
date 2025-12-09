@@ -200,26 +200,37 @@ class SmartStrategy:
         self.curvature_analyzer = CurvatureAnalyzer(mesh)
         self.curvature_field: Optional[CurvatureField] = None
         self.region_map: Dict[RegionType, np.ndarray] = {}
+        self._fast_mode = False
 
-    def analyze(self) -> MachiningPlan:
+    def analyze(self, fast_mode: bool = False) -> MachiningPlan:
         """
-        Perform complete mesh analysis and generate machining plan.
+        Perform mesh analysis and generate machining plan.
+
+        Args:
+            fast_mode: Skip detailed curvature analysis for speed.
+                      Uses heuristics based on mesh complexity.
 
         Returns:
             MachiningPlan with recommended operations
         """
-        logger.info("Starting smart strategy analysis...")
+        self._fast_mode = fast_mode
+        mode_str = "FAST" if fast_mode else "full"
+        logger.info(f"Starting smart strategy analysis ({mode_str} mode)...")
 
         # Compute mesh properties
         bounds = self.mesh.bounds
         size = bounds[1] - bounds[0]
         volume = self.mesh.volume if self.mesh.is_watertight else 0
 
-        # Analyze curvature
-        self._analyze_curvature()
-
-        # Segment into regions
-        region_analysis = self._segment_regions()
+        if fast_mode:
+            # FAST MODE: Use heuristics based on mesh complexity
+            region_analysis = self._estimate_regions_fast()
+            curvature_stats = {"min": 0, "max": 1, "mean": 0.5, "median": 0.5, "std": 0.3}
+        else:
+            # FULL MODE: Detailed curvature analysis
+            self._analyze_curvature()
+            region_analysis = self._segment_regions()
+            curvature_stats = self._get_curvature_stats()
 
         # Generate tool recommendations
         operations = self._recommend_operations(size)
@@ -231,7 +242,7 @@ class SmartStrategy:
             mesh_size=size.tolist(),
             total_volume=float(volume),
             region_analysis=region_analysis,
-            curvature_stats=self._get_curvature_stats(),
+            curvature_stats=curvature_stats,
             operations=operations,
             total_tools=len(set(op.tool.diameter for op in operations)),
             estimated_time_reduction="25-35%",
@@ -240,6 +251,55 @@ class SmartStrategy:
 
         logger.info(f"Analysis complete: {len(operations)} operations recommended")
         return plan
+
+    def _estimate_regions_fast(self) -> Dict[str, Any]:
+        """
+        Fast region estimation using mesh heuristics.
+
+        Uses face count and normals variance to estimate surface complexity
+        without computing full curvature field.
+        """
+        n_faces = len(self.mesh.faces)
+        n_vertices = len(self.mesh.vertices)
+
+        # Estimate complexity from face density
+        bounds = self.mesh.bounds
+        bbox_volume = np.prod(bounds[1] - bounds[0])
+        face_density = n_faces / (bbox_volume + 1e-10)
+
+        # Use normal variance as proxy for surface complexity
+        normals = self.mesh.face_normals
+        normal_variance = np.var(normals, axis=0).mean()
+
+        # Heuristic classification
+        if normal_variance < 0.1:
+            # Mostly flat surfaces
+            flat_pct, curve_pct, sharp_pct = 70, 20, 10
+        elif normal_variance < 0.3:
+            # Mixed surfaces
+            flat_pct, curve_pct, sharp_pct = 30, 50, 20
+        else:
+            # Complex curved surfaces
+            flat_pct, curve_pct, sharp_pct = 10, 40, 50
+
+        # Populate region_map with estimates for _recommend_operations
+        self.region_map = {
+            RegionType.FLAT: np.ones(int(n_vertices * flat_pct / 100), dtype=bool),
+            RegionType.GENTLE_CURVE: np.ones(int(n_vertices * curve_pct / 200), dtype=bool),
+            RegionType.MODERATE_CURVE: np.ones(int(n_vertices * curve_pct / 200), dtype=bool),
+            RegionType.HIGH_CURVE: np.ones(int(n_vertices * sharp_pct / 200), dtype=bool),
+            RegionType.SHARP_FEATURE: np.ones(int(n_vertices * sharp_pct / 200), dtype=bool),
+        }
+
+        return {
+            "flat_percent": flat_pct,
+            "gentle_curve_percent": curve_pct / 2,
+            "moderate_curve_percent": curve_pct / 2,
+            "high_curve_percent": sharp_pct / 2,
+            "sharp_feature_percent": sharp_pct / 2,
+            "total_vertices": n_vertices,
+            "fast_mode": True,
+        }
 
     def _analyze_curvature(self) -> None:
         """Compute curvature field for the mesh."""
@@ -480,7 +540,8 @@ class SmartStrategy:
 
 def analyze_mesh_for_smart_strategy(
     mesh: trimesh.Trimesh,
-    mesh_id: str = ""
+    mesh_id: str = "",
+    fast_mode: bool = False
 ) -> MachiningPlan:
     """
     Convenience function to analyze mesh and generate smart machining plan.
@@ -488,9 +549,10 @@ def analyze_mesh_for_smart_strategy(
     Args:
         mesh: Trimesh mesh object
         mesh_id: Optional mesh identifier
+        fast_mode: Skip detailed curvature analysis for speed
 
     Returns:
         MachiningPlan with recommended operations
     """
     analyzer = SmartStrategy(mesh, mesh_id)
-    return analyzer.analyze()
+    return analyzer.analyze(fast_mode=fast_mode)

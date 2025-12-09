@@ -1216,6 +1216,7 @@ def create_app():
         """Analyze mesh and generate smart multi-tool machining plan."""
         try:
             mesh_id = request.get("mesh_id")
+            fast_mode = request.get("fast_mode", False)  # Default: full analysis
 
             if not mesh_id or mesh_id not in mesh_store:
                 return JSONResponse({"error": "Mesh not found"}, status_code=404)
@@ -1226,8 +1227,9 @@ def create_app():
             # Import and run smart strategy analysis
             from pycam3d.smart_strategy import analyze_mesh_for_smart_strategy
 
-            logger.info(f"Running smart strategy analysis for mesh {mesh_id}")
-            plan = analyze_mesh_for_smart_strategy(mesh, mesh_id)
+            mode_str = "FAST" if fast_mode else "full"
+            logger.info(f"Running smart strategy analysis ({mode_str}) for mesh {mesh_id}")
+            plan = analyze_mesh_for_smart_strategy(mesh, mesh_id, fast_mode=fast_mode)
 
             return JSONResponse(plan.to_dict())
 
