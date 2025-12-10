@@ -318,6 +318,21 @@ HTML_TEMPLATE = """
             <div id="toolpath-section" class="card hidden">
                 <h2>Toolpath Settings</h2>
 
+                <div class="form-group" style="margin-bottom: 15px;">
+                    <label>Matériau</label>
+                    <select id="material-select">
+                        <option value="aluminum">Aluminium</option>
+                        <option value="wood_soft">Bois tendre</option>
+                        <option value="wood_hard">Bois dur</option>
+                        <option value="plastic_soft">Plastique souple</option>
+                        <option value="plastic_hard">Plastique dur</option>
+                        <option value="brass">Laiton</option>
+                        <option value="steel_mild">Acier doux</option>
+                        <option value="foam">Mousse</option>
+                        <option value="mdf">MDF</option>
+                    </select>
+                </div>
+
                 <button class="btn-success" id="smart-btn" style="margin-bottom: 15px;">
                     Smart Strategy (Auto-Optimize)
                 </button>
@@ -406,6 +421,44 @@ HTML_TEMPLATE = """
                     Animate Toolpath
                 </button>
             </div>
+
+            <div id="simulation-section" class="card hidden">
+                <h2>🎬 Simulation</h2>
+                <div style="margin-bottom: 12px;">
+                    <div style="display: flex; gap: 8px; margin-bottom: 10px;">
+                        <button class="btn-primary btn-small" id="sim-play">▶ Play</button>
+                        <button class="btn-secondary btn-small" id="sim-pause">⏸ Pause</button>
+                        <button class="btn-secondary btn-small" id="sim-reset">⏮ Reset</button>
+                    </div>
+                    <div class="form-group" style="margin-bottom: 8px;">
+                        <label>Vitesse <span class="range-value" id="sim-speed-val">1</span>x</label>
+                        <input type="range" id="sim-speed" min="0.1" max="10" value="1" step="0.1">
+                    </div>
+                    <div class="form-group">
+                        <label>Progression <span class="range-value" id="sim-progress-val">0</span>%</label>
+                        <input type="range" id="sim-progress" min="0" max="100" value="0" step="0.1">
+                    </div>
+                </div>
+                <div style="background: rgba(255,255,255,0.03); border-radius: 6px; padding: 10px; font-size: 0.8rem;">
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                        <div>🔧 Outil: <span id="sim-tool-info">-</span></div>
+                        <div>📍 Position: <span id="sim-position">-</span></div>
+                        <div>⏱ Temps: <span id="sim-time">0:00</span></div>
+                        <div>📏 Distance: <span id="sim-distance">0</span>mm</div>
+                    </div>
+                </div>
+                <div style="margin-top: 10px;">
+                    <label style="display: flex; align-items: center; gap: 8px; font-size: 0.85rem;">
+                        <input type="checkbox" id="sim-show-stock" checked> Afficher brut
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 8px; font-size: 0.85rem;">
+                        <input type="checkbox" id="sim-show-holder" checked> Afficher porte-outil
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 8px; font-size: 0.85rem;">
+                        <input type="checkbox" id="sim-show-trail" checked> Afficher trajectoire
+                    </label>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -440,6 +493,23 @@ HTML_TEMPLATE = """
         let meshSize = new THREE.Vector3();
         let initialCameraPos = new THREE.Vector3();
         let initialControlsTarget = new THREE.Vector3();
+
+        // Simulation state
+        let simState = {
+            playing: false,
+            progress: 0,
+            speed: 1,
+            toolPath: [],
+            currentIndex: 0,
+            startTime: 0,
+            totalDistance: 0,
+            feedRate: 1000
+        };
+        let stockMesh = null;
+        let toolGroup = null;
+        let holderMesh = null;
+        let trailLine = null;
+        let trailPoints = [];
 
         function init() {
             scene = new THREE.Scene();
@@ -498,8 +568,292 @@ HTML_TEMPLATE = """
         function animate() {
             requestAnimationFrame(animate);
             controls.update();
+
+            // Update simulation if playing
+            if (simState.playing && simState.toolPath.length > 0) {
+                updateSimulation();
+            }
+
             renderer.render(scene, camera);
         }
+
+        // ============================================================
+        // SIMULATION FUNCTIONS
+        // ============================================================
+
+        function createToolGeometry(toolType, diameter, length = 50) {
+            const group = new THREE.Group();
+            const radius = diameter / 2;
+
+            // Tool shank (cylindrical part)
+            const shankGeom = new THREE.CylinderGeometry(radius, radius, length * 0.6, 16);
+            const shankMat = new THREE.MeshPhongMaterial({ color: 0x888888, shininess: 100 });
+            const shank = new THREE.Mesh(shankGeom, shankMat);
+            shank.position.y = length * 0.3 + length * 0.2;
+            group.add(shank);
+
+            // Cutting part based on tool type
+            let cuttingGeom;
+            if (toolType === 'ball') {
+                // Ball end mill - hemisphere + cylinder
+                const sphereGeom = new THREE.SphereGeometry(radius, 16, 16, 0, Math.PI * 2, 0, Math.PI / 2);
+                const cutting = new THREE.Mesh(sphereGeom, new THREE.MeshPhongMaterial({ color: 0x44aaff, shininess: 150 }));
+                cutting.rotation.x = Math.PI;
+                group.add(cutting);
+
+                const cylGeom = new THREE.CylinderGeometry(radius, radius, length * 0.4, 16);
+                const cyl = new THREE.Mesh(cylGeom, new THREE.MeshPhongMaterial({ color: 0x44aaff, shininess: 150 }));
+                cyl.position.y = length * 0.2;
+                group.add(cyl);
+            } else if (toolType === 'flat') {
+                // Flat end mill - cylinder with flat bottom
+                cuttingGeom = new THREE.CylinderGeometry(radius, radius, length * 0.4, 16);
+                const cutting = new THREE.Mesh(cuttingGeom, new THREE.MeshPhongMaterial({ color: 0xff8844, shininess: 150 }));
+                cutting.position.y = length * 0.2;
+                group.add(cutting);
+            } else {
+                // Bull nose - cylinder with rounded edges
+                cuttingGeom = new THREE.CylinderGeometry(radius, radius, length * 0.4, 16);
+                const cutting = new THREE.Mesh(cuttingGeom, new THREE.MeshPhongMaterial({ color: 0x44ff88, shininess: 150 }));
+                cutting.position.y = length * 0.2;
+                group.add(cutting);
+            }
+
+            return group;
+        }
+
+        function createToolHolder(diameter) {
+            const group = new THREE.Group();
+
+            // Holder body (tapered cylinder)
+            const holderGeom = new THREE.CylinderGeometry(diameter * 2, diameter * 1.5, 40, 16);
+            const holderMat = new THREE.MeshPhongMaterial({
+                color: 0x333333,
+                transparent: true,
+                opacity: 0.7
+            });
+            const holder = new THREE.Mesh(holderGeom, holderMat);
+            holder.position.y = 70;
+            group.add(holder);
+
+            // Collet nut
+            const nutGeom = new THREE.CylinderGeometry(diameter * 1.2, diameter * 1.5, 10, 6);
+            const nut = new THREE.Mesh(nutGeom, new THREE.MeshPhongMaterial({ color: 0x555555 }));
+            nut.position.y = 45;
+            group.add(nut);
+
+            return group;
+        }
+
+        function createStockMesh(bounds, margin = 5) {
+            const size = [
+                bounds[1][0] - bounds[0][0] + margin * 2,
+                bounds[1][1] - bounds[0][1] + margin * 2,
+                bounds[1][2] - bounds[0][2] + margin * 2
+            ];
+            const center = [
+                (bounds[0][0] + bounds[1][0]) / 2,
+                (bounds[0][1] + bounds[1][1]) / 2,
+                (bounds[0][2] + bounds[1][2]) / 2
+            ];
+
+            const geometry = new THREE.BoxGeometry(size[0], size[2], size[1]);
+            const material = new THREE.MeshPhongMaterial({
+                color: 0xDEB887,  // Wood color
+                transparent: true,
+                opacity: 0.6,
+                side: THREE.DoubleSide
+            });
+            const stock = new THREE.Mesh(geometry, material);
+            stock.position.set(center[0], center[2] / 2 + margin, center[1]);
+
+            // Add wireframe
+            const wireGeom = new THREE.EdgesGeometry(geometry);
+            const wireMat = new THREE.LineBasicMaterial({ color: 0x8B4513, linewidth: 2 });
+            const wireframe = new THREE.LineSegments(wireGeom, wireMat);
+            stock.add(wireframe);
+
+            return stock;
+        }
+
+        function initSimulation(toolpathPoints, toolInfo) {
+            // Clear previous simulation objects
+            if (stockMesh) scene.remove(stockMesh);
+            if (toolGroup) scene.remove(toolGroup);
+            if (holderMesh) scene.remove(holderMesh);
+            if (trailLine) scene.remove(trailLine);
+
+            // Create stock from mesh bounds
+            if (meshData && meshData.stats) {
+                const bounds = [meshData.stats.bounds_min, meshData.stats.bounds_max];
+                stockMesh = createStockMesh(bounds);
+                scene.add(stockMesh);
+            }
+
+            // Create tool
+            const toolDia = toolInfo?.diameter || 6;
+            const toolType = toolInfo?.type || 'ball';
+            toolGroup = createToolGeometry(toolType, toolDia);
+            scene.add(toolGroup);
+
+            // Create holder
+            holderMesh = createToolHolder(toolDia);
+            scene.add(holderMesh);
+
+            // Initialize trail
+            trailPoints = [];
+            const trailGeom = new THREE.BufferGeometry();
+            const trailMat = new THREE.LineBasicMaterial({ color: 0x00ff00, linewidth: 2 });
+            trailLine = new THREE.Line(trailGeom, trailMat);
+            scene.add(trailLine);
+
+            // Store toolpath
+            simState.toolPath = toolpathPoints;
+            simState.currentIndex = 0;
+            simState.progress = 0;
+            simState.playing = false;
+
+            // Calculate total distance
+            simState.totalDistance = 0;
+            for (let i = 1; i < toolpathPoints.length; i++) {
+                const dx = toolpathPoints[i][0] - toolpathPoints[i-1][0];
+                const dy = toolpathPoints[i][1] - toolpathPoints[i-1][1];
+                const dz = toolpathPoints[i][2] - toolpathPoints[i-1][2];
+                simState.totalDistance += Math.sqrt(dx*dx + dy*dy + dz*dz);
+            }
+
+            // Position tool at start
+            if (toolpathPoints.length > 0) {
+                const p = toolpathPoints[0];
+                toolGroup.position.set(p[0], p[2], p[1]);
+                holderMesh.position.set(p[0], p[2], p[1]);
+            }
+
+            // Update UI
+            document.getElementById('sim-tool-info').textContent = `${toolType} Ø${toolDia}mm`;
+            document.getElementById('sim-distance').textContent = simState.totalDistance.toFixed(0);
+
+            // Show simulation section
+            document.getElementById('simulation-section').classList.remove('hidden');
+        }
+
+        function updateSimulation() {
+            if (!simState.toolPath.length) return;
+
+            const now = performance.now();
+            const elapsed = (now - simState.startTime) * simState.speed;
+
+            // Calculate target position based on elapsed time and feed rate
+            const distanceToTravel = (elapsed / 60000) * simState.feedRate; // mm
+            let accumulatedDist = 0;
+            let targetIndex = 0;
+
+            for (let i = 1; i < simState.toolPath.length; i++) {
+                const dx = simState.toolPath[i][0] - simState.toolPath[i-1][0];
+                const dy = simState.toolPath[i][1] - simState.toolPath[i-1][1];
+                const dz = simState.toolPath[i][2] - simState.toolPath[i-1][2];
+                const segDist = Math.sqrt(dx*dx + dy*dy + dz*dz);
+
+                if (accumulatedDist + segDist > distanceToTravel) {
+                    const t = (distanceToTravel - accumulatedDist) / segDist;
+                    const p = [
+                        simState.toolPath[i-1][0] + t * dx,
+                        simState.toolPath[i-1][1] + t * dy,
+                        simState.toolPath[i-1][2] + t * dz
+                    ];
+
+                    // Update tool position
+                    toolGroup.position.set(p[0], p[2], p[1]);
+                    holderMesh.position.set(p[0], p[2], p[1]);
+
+                    // Update trail
+                    if (document.getElementById('sim-show-trail').checked) {
+                        trailPoints.push(new THREE.Vector3(p[0], p[2], p[1]));
+                        if (trailPoints.length > 2) {
+                            trailLine.geometry.setFromPoints(trailPoints);
+                        }
+                    }
+
+                    // Update progress
+                    simState.progress = (distanceToTravel / simState.totalDistance) * 100;
+                    document.getElementById('sim-progress').value = simState.progress;
+                    document.getElementById('sim-progress-val').textContent = simState.progress.toFixed(1);
+                    document.getElementById('sim-position').textContent =
+                        `X${p[0].toFixed(1)} Y${p[1].toFixed(1)} Z${p[2].toFixed(1)}`;
+
+                    // Time
+                    const timeSeconds = (distanceToTravel / simState.feedRate) * 60;
+                    const mins = Math.floor(timeSeconds / 60);
+                    const secs = Math.floor(timeSeconds % 60);
+                    document.getElementById('sim-time').textContent = `${mins}:${secs.toString().padStart(2, '0')}`;
+
+                    return;
+                }
+                accumulatedDist += segDist;
+                targetIndex = i;
+            }
+
+            // Reached end
+            simState.playing = false;
+            simState.progress = 100;
+            document.getElementById('sim-progress').value = 100;
+            document.getElementById('sim-progress-val').textContent = '100';
+        }
+
+        // Simulation controls
+        document.getElementById('sim-play')?.addEventListener('click', () => {
+            if (!simState.toolPath.length) return;
+            simState.playing = true;
+            simState.startTime = performance.now() - (simState.progress / 100 * simState.totalDistance / simState.feedRate * 60000);
+            showStatus('▶ Simulation en cours...', 2000);
+        });
+
+        document.getElementById('sim-pause')?.addEventListener('click', () => {
+            simState.playing = false;
+            showStatus('⏸ Pause', 1000);
+        });
+
+        document.getElementById('sim-reset')?.addEventListener('click', () => {
+            simState.playing = false;
+            simState.progress = 0;
+            simState.currentIndex = 0;
+            trailPoints = [];
+            if (trailLine) trailLine.geometry.setFromPoints([]);
+            if (simState.toolPath.length > 0) {
+                const p = simState.toolPath[0];
+                toolGroup?.position.set(p[0], p[2], p[1]);
+                holderMesh?.position.set(p[0], p[2], p[1]);
+            }
+            document.getElementById('sim-progress').value = 0;
+            document.getElementById('sim-progress-val').textContent = '0';
+            document.getElementById('sim-time').textContent = '0:00';
+            showStatus('⏮ Reset', 1000);
+        });
+
+        document.getElementById('sim-speed')?.addEventListener('input', (e) => {
+            simState.speed = parseFloat(e.target.value);
+            document.getElementById('sim-speed-val').textContent = simState.speed.toFixed(1);
+        });
+
+        document.getElementById('sim-progress')?.addEventListener('input', (e) => {
+            simState.progress = parseFloat(e.target.value);
+            document.getElementById('sim-progress-val').textContent = simState.progress.toFixed(1);
+            simState.startTime = performance.now() - (simState.progress / 100 * simState.totalDistance / simState.feedRate * 60000);
+        });
+
+        document.getElementById('sim-show-stock')?.addEventListener('change', (e) => {
+            if (stockMesh) stockMesh.visible = e.target.checked;
+        });
+
+        document.getElementById('sim-show-holder')?.addEventListener('change', (e) => {
+            if (holderMesh) holderMesh.visible = e.target.checked;
+        });
+
+        document.getElementById('sim-show-trail')?.addEventListener('change', (e) => {
+            if (trailLine) trailLine.visible = e.target.checked;
+        });
+
+        // ============================================================
 
         let statusTimeout = null;
         function showStatus(msg, duration = 3000) {
@@ -782,10 +1136,11 @@ HTML_TEMPLATE = """
             document.getElementById('smart-btn').disabled = true;
 
             try {
+                const material = document.getElementById('material-select').value;
                 const response = await fetch('/api/analyze', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ mesh_id: currentMeshId })
+                    body: JSON.stringify({ mesh_id: currentMeshId, material: material })
                 });
                 const data = await response.json();
 
@@ -858,6 +1213,7 @@ HTML_TEMPLATE = """
 
             plan.operations.forEach((op, idx) => {
                 const color = phaseColors[op.phase] || '#888';
+                const cp = op.cutting_params || {};
                 html += `<div style="background: rgba(255,255,255,0.05); padding: 8px; border-radius: 6px; border-left: 3px solid ${color};">`;
                 html += `<div style="display: flex; justify-content: space-between; align-items: center;">`;
                 html += `<span style="font-weight: 600; color: ${color}; font-size: 0.75rem;">${phaseLabels[op.phase]}</span>`;
@@ -866,10 +1222,25 @@ HTML_TEMPLATE = """
                 html += `<div style="font-size: 0.85rem; margin-top: 4px;">`;
                 html += `<strong>${op.tool.name}</strong> - ${op.strategy} @ ${op.stepover_percent}%`;
                 html += `</div>`;
+                if (cp.spindle_rpm) {
+                    html += `<div style="font-size: 0.7rem; color: #888; margin-top: 4px; display: grid; grid-template-columns: 1fr 1fr; gap: 4px;">`;
+                    html += `<span>⚡ ${cp.spindle_rpm} RPM</span>`;
+                    html += `<span>➡️ F${Math.round(cp.feed_rate)}</span>`;
+                    html += `<span>⬇️ DOC ${cp.depth_of_cut}mm</span>`;
+                    html += `<span>↔️ Step ${cp.stepover}mm</span>`;
+                    html += `</div>`;
+                }
                 html += `</div>`;
             });
 
             html += '</div>';
+
+            // Material info
+            if (plan.material) {
+                html += `<div style="margin-top: 10px; padding: 8px; background: rgba(255,255,255,0.03); border-radius: 6px;">`;
+                html += `<div style="font-size: 0.75rem; color: #888;">Matériau: <span style="color: ${plan.material.color}; font-weight: 600;">${plan.material.name}</span></div>`;
+                html += `</div>`;
+            }
 
             // Summary
             html += `<div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.1); font-size: 0.8rem;">`;
@@ -1025,6 +1396,18 @@ HTML_TEMPLATE = """
         document.getElementById('animate-btn').addEventListener('click', async () => {
             if (!currentMeshId) return;
 
+            // Use new simulation if we have toolpath data
+            if (gcodeData && gcodeData.points && gcodeData.points.length > 0) {
+                const toolInfo = {
+                    type: document.getElementById('tool-type')?.value || 'ball',
+                    diameter: parseFloat(document.getElementById('tool-diameter')?.value) || 6
+                };
+                simState.feedRate = parseFloat(document.getElementById('feed-rate')?.value) || 1000;
+                initSimulation(gcodeData.points, toolInfo);
+                showStatus('🎬 Simulation prête! Cliquez Play pour démarrer.', 3000);
+                return;
+            }
+
             if (isAnimating) {
                 stopAnimation();
                 return;
@@ -1148,6 +1531,24 @@ def create_app():
     async def index():
         return HTML_TEMPLATE
 
+    # Max faces for visualization (prevents browser lag)
+    MAX_DISPLAY_FACES = 50000
+
+    def decimate_for_display(mesh, max_faces=MAX_DISPLAY_FACES):
+        """Decimate mesh for fast browser display."""
+        if len(mesh.faces) <= max_faces:
+            return mesh
+        # Use trimesh's simplify_quadric_decimation if available
+        try:
+            ratio = max_faces / len(mesh.faces)
+            simplified = mesh.simplify_quadric_decimation(int(len(mesh.faces) * ratio))
+            logger.info(f"Decimated mesh: {len(mesh.faces)} -> {len(simplified.faces)} faces")
+            return simplified
+        except Exception:
+            # Fallback: random face sampling
+            indices = np.random.choice(len(mesh.faces), max_faces, replace=False)
+            return mesh.submesh([indices], append=True)
+
     @app.post("/api/upload")
     async def upload_mesh(file: UploadFile = File(...)):
         """Upload and analyze a mesh file."""
@@ -1162,14 +1563,14 @@ def create_app():
             # Load with trimesh
             mesh = trimesh.load_mesh(tmp_path)
 
-            # Generate ID and store
+            # Generate ID and store FULL mesh for analysis
             mesh_id = str(uuid.uuid4())[:8]
             mesh_store[mesh_id] = {
                 "mesh": mesh,
                 "path": tmp_path,
             }
 
-            # Get stats
+            # Get stats from FULL mesh
             stats = {
                 "vertex_count": len(mesh.vertices),
                 "face_count": len(mesh.faces),
@@ -1178,12 +1579,16 @@ def create_app():
                 "bounds_max": mesh.bounds[1].tolist(),
             }
 
+            # Decimate for DISPLAY only
+            display_mesh = decimate_for_display(mesh)
+
             return JSONResponse({
                 "mesh_id": mesh_id,
                 "filename": file.filename,
                 "stats": stats,
-                "vertices": mesh.vertices.tolist(),
-                "faces": mesh.faces.tolist(),
+                "vertices": display_mesh.vertices.tolist(),
+                "faces": display_mesh.faces.tolist(),
+                "decimated": len(display_mesh.faces) < len(mesh.faces),
             })
 
         except Exception as e:
@@ -1223,15 +1628,39 @@ def create_app():
 
             logger.info(f"Mesh {mesh_id} scaled by factor {factor}")
 
+            # Decimate for display
+            display_mesh = decimate_for_display(mesh)
+
             return JSONResponse({
                 "mesh_id": mesh_id,
                 "stats": stats,
-                "vertices": mesh.vertices.tolist(),
-                "faces": mesh.faces.tolist(),
+                "vertices": display_mesh.vertices.tolist(),
+                "faces": display_mesh.faces.tolist(),
             })
 
         except Exception as e:
             logger.exception("Scale failed")
+            return JSONResponse({"error": str(e)}, status_code=400)
+
+    @app.get("/api/materials")
+    async def get_materials():
+        """Get list of available materials with cutting properties."""
+        from pycam3d.materials import get_material_list
+        return JSONResponse({"materials": get_material_list()})
+
+    @app.post("/api/cutting-params")
+    async def get_cutting_params(request: dict):
+        """Calculate cutting parameters for material and tool."""
+        from pycam3d.materials import calculate_cutting_params, MaterialType
+        try:
+            material = request.get("material", "aluminum")
+            tool_diameter = float(request.get("tool_diameter", 6.0))
+            is_finishing = request.get("is_finishing", False)
+
+            mat_type = MaterialType(material)
+            params = calculate_cutting_params(mat_type, tool_diameter, is_finishing=is_finishing)
+            return JSONResponse(params.to_dict())
+        except Exception as e:
             return JSONResponse({"error": str(e)}, status_code=400)
 
     @app.post("/api/analyze")
@@ -1239,6 +1668,7 @@ def create_app():
         """Analyze mesh and generate smart multi-tool machining plan."""
         try:
             mesh_id = request.get("mesh_id")
+            material = request.get("material", "aluminum")
 
             if not mesh_id or mesh_id not in mesh_store:
                 return JSONResponse({"error": "Mesh not found"}, status_code=404)
@@ -1248,11 +1678,26 @@ def create_app():
 
             # Import and run smart strategy analysis
             from pycam3d.smart_strategy import analyze_mesh_for_smart_strategy
+            from pycam3d.materials import calculate_cutting_params, MaterialType, MATERIALS
 
             logger.info(f"Running smart strategy analysis for mesh {mesh_id}")
             plan = analyze_mesh_for_smart_strategy(mesh, mesh_id)
 
-            return JSONResponse(plan.to_dict())
+            # Add cutting parameters for each operation
+            result = plan.to_dict()
+            try:
+                mat_type = MaterialType(material)
+                mat_info = MATERIALS[mat_type]
+                result["material"] = {"type": material, "name": mat_info.name, "color": mat_info.color}
+
+                for op in result["operations"]:
+                    is_finish = op["phase"] in ["finish", "detail"]
+                    params = calculate_cutting_params(mat_type, op["tool"]["diameter"], is_finishing=is_finish)
+                    op["cutting_params"] = params.to_dict()
+            except Exception:
+                pass  # Material params optional
+
+            return JSONResponse(result)
 
         except Exception as e:
             logger.exception("Analysis failed")
