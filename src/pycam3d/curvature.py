@@ -133,105 +133,133 @@ class CurvatureAnalyzer:
         return self._curvature_field
 
     def _compute_mean_curvature_laplacian(self) -> np.ndarray:
-        """Compute mean curvature using cotangent Laplacian."""
+        """Compute mean curvature using cotangent Laplacian (vectorized)."""
         vertices = self.mesh.vertices
         faces = self.mesh.faces
         n_vertices = len(vertices)
 
-        # Build cotangent weights
+        # Get all triangle vertices at once (vectorized)
+        vi = vertices[faces[:, 0]]  # (n_faces, 3)
+        vj = vertices[faces[:, 1]]
+        vk = vertices[faces[:, 2]]
+
+        # Edge vectors (vectorized)
+        eij = vj - vi
+        ejk = vk - vj
+        eki = vi - vk
+
+        # Cotangent weights (vectorized)
+        cot_i = self._cotangent_vec(eij, -eki)
+        cot_j = self._cotangent_vec(ejk, -eij)
+        cot_k = self._cotangent_vec(eki, -ejk)
+
+        # Triangle areas (vectorized)
+        cross = np.cross(eij, -eki)
+        tri_areas = 0.5 * np.linalg.norm(cross, axis=1)
+
+        # Edge lengths (vectorized)
+        len_eij = np.linalg.norm(eij, axis=1)
+        len_ejk = np.linalg.norm(ejk, axis=1)
+        len_eki = np.linalg.norm(eki, axis=1)
+
+        # Accumulate using np.add.at (fast scatter-add)
         mean_curvature = np.zeros(n_vertices)
         area = np.zeros(n_vertices)
 
-        for face in faces:
-            i, j, k = face
-            vi, vj, vk = vertices[i], vertices[j], vertices[k]
+        np.add.at(area, faces[:, 0], tri_areas / 3)
+        np.add.at(area, faces[:, 1], tri_areas / 3)
+        np.add.at(area, faces[:, 2], tri_areas / 3)
 
-            # Edge vectors
-            eij = vj - vi
-            ejk = vk - vj
-            eki = vi - vk
+        np.add.at(mean_curvature, faces[:, 0], cot_j * len_eki + cot_k * len_eij)
+        np.add.at(mean_curvature, faces[:, 1], cot_k * len_eij + cot_i * len_ejk)
+        np.add.at(mean_curvature, faces[:, 2], cot_i * len_ejk + cot_j * len_eki)
 
-            # Cotangent weights
-            cot_i = self._cotangent(eij, -eki)
-            cot_j = self._cotangent(ejk, -eij)
-            cot_k = self._cotangent(eki, -ejk)
+        # Normalize
+        area = np.maximum(area, 1e-10)
+        return mean_curvature / (4 * area)
 
-            # Triangle area (for normalization)
-            tri_area = 0.5 * np.linalg.norm(np.cross(eij, -eki))
-            area[[i, j, k]] += tri_area / 3
-
-            # Laplacian contribution
-            mean_curvature[i] += cot_j * np.linalg.norm(eki) + cot_k * np.linalg.norm(eij)
-            mean_curvature[j] += cot_k * np.linalg.norm(eij) + cot_i * np.linalg.norm(ejk)
-            mean_curvature[k] += cot_i * np.linalg.norm(ejk) + cot_j * np.linalg.norm(eki)
-
-        # Normalize by area
-        area = np.maximum(area, 1e-10)  # Avoid division by zero
-        mean_curvature = mean_curvature / (4 * area)
-
-        return mean_curvature
+    @staticmethod
+    def _cotangent_vec(v1: np.ndarray, v2: np.ndarray) -> np.ndarray:
+        """Vectorized cotangent of angles between vectors (n_faces,)."""
+        dot = np.sum(v1 * v2, axis=1)
+        norm1 = np.linalg.norm(v1, axis=1)
+        norm2 = np.linalg.norm(v2, axis=1)
+        cos_angle = dot / (norm1 * norm2 + 1e-10)
+        cos_angle = np.clip(cos_angle, -1, 1)
+        sin_angle = np.sqrt(1 - cos_angle**2) + 1e-10
+        return cos_angle / sin_angle
 
     def _compute_gaussian_curvature_angle_defect(self) -> np.ndarray:
-        """Compute Gaussian curvature using angle defect method."""
+        """Compute Gaussian curvature using angle defect method (vectorized)."""
         vertices = self.mesh.vertices
         faces = self.mesh.faces
         n_vertices = len(vertices)
 
-        # Angle sum at each vertex
+        # Get all triangle vertices (vectorized)
+        vi = vertices[faces[:, 0]]
+        vj = vertices[faces[:, 1]]
+        vk = vertices[faces[:, 2]]
+
+        # Compute angles at each vertex (vectorized)
+        angles_i = self._angle_between_vec(vj - vi, vk - vi)
+        angles_j = self._angle_between_vec(vi - vj, vk - vj)
+        angles_k = self._angle_between_vec(vi - vk, vj - vk)
+
+        # Triangle areas (vectorized)
+        cross = np.cross(vj - vi, vk - vi)
+        tri_areas = 0.5 * np.linalg.norm(cross, axis=1)
+
+        # Accumulate using np.add.at
         angle_sum = np.zeros(n_vertices)
         area = np.zeros(n_vertices)
 
-        for face in faces:
-            i, j, k = face
-            vi, vj, vk = vertices[i], vertices[j], vertices[k]
+        np.add.at(angle_sum, faces[:, 0], angles_i)
+        np.add.at(angle_sum, faces[:, 1], angles_j)
+        np.add.at(angle_sum, faces[:, 2], angles_k)
 
-            # Compute angles at each vertex
-            angle_i = self._angle_between(vj - vi, vk - vi)
-            angle_j = self._angle_between(vi - vj, vk - vj)
-            angle_k = self._angle_between(vi - vk, vj - vk)
-
-            angle_sum[i] += angle_i
-            angle_sum[j] += angle_j
-            angle_sum[k] += angle_k
-
-            # Mixed area (Voronoi area approximation)
-            tri_area = 0.5 * np.linalg.norm(np.cross(vj - vi, vk - vi))
-            area[[i, j, k]] += tri_area / 3
+        np.add.at(area, faces[:, 0], tri_areas / 3)
+        np.add.at(area, faces[:, 1], tri_areas / 3)
+        np.add.at(area, faces[:, 2], tri_areas / 3)
 
         # Gaussian curvature = (2π - angle_sum) / area
         area = np.maximum(area, 1e-10)
-        gaussian = (2 * np.pi - angle_sum) / area
+        return (2 * np.pi - angle_sum) / area
 
-        return gaussian
+    @staticmethod
+    def _angle_between_vec(v1: np.ndarray, v2: np.ndarray) -> np.ndarray:
+        """Vectorized angle between vectors (n_faces,)."""
+        dot = np.sum(v1 * v2, axis=1)
+        norm1 = np.linalg.norm(v1, axis=1)
+        norm2 = np.linalg.norm(v2, axis=1)
+        cos_angle = dot / (norm1 * norm2 + 1e-10)
+        cos_angle = np.clip(cos_angle, -1, 1)
+        return np.arccos(cos_angle)
 
     def _compute_principal_directions_simple(
         self, normals: np.ndarray
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
-        Compute approximate principal directions.
+        Compute approximate principal directions (vectorized).
 
         Uses the tangent plane basis as approximation.
-        For accurate results, need full shape operator computation.
         """
         n_vertices = len(normals)
 
-        # Create orthonormal basis in tangent plane
-        d1 = np.zeros((n_vertices, 3))
-        d2 = np.zeros((n_vertices, 3))
+        # Choose reference vector not parallel to normal (vectorized)
+        t = np.zeros((n_vertices, 3))
+        mask = np.abs(normals[:, 0]) < 0.9
+        t[mask] = [1, 0, 0]
+        t[~mask] = [0, 1, 0]
 
-        for i, n in enumerate(normals):
-            # Find a vector not parallel to normal
-            if abs(n[0]) < 0.9:
-                t = np.array([1, 0, 0])
-            else:
-                t = np.array([0, 1, 0])
+        # Gram-Schmidt (vectorized)
+        dot_tn = np.sum(t * normals, axis=1, keepdims=True)
+        d1 = t - dot_tn * normals
+        d1_norm = np.linalg.norm(d1, axis=1, keepdims=True) + 1e-10
+        d1 = d1 / d1_norm
 
-            # Gram-Schmidt
-            d1[i] = t - np.dot(t, n) * n
-            d1[i] /= np.linalg.norm(d1[i]) + 1e-10
-
-            d2[i] = np.cross(n, d1[i])
-            d2[i] /= np.linalg.norm(d2[i]) + 1e-10
+        d2 = np.cross(normals, d1)
+        d2_norm = np.linalg.norm(d2, axis=1, keepdims=True) + 1e-10
+        d2 = d2 / d2_norm
 
         return d1, d2
 
